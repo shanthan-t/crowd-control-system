@@ -1,0 +1,5 @@
+pyaudio
+librosa
+numpy
+streamlit
+scikit-learn
