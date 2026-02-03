@@ -3,3 +3,8 @@ librosa
 numpy
 streamlit
 scikit-learn
+opencv-python
+ultralytics
+python-socketio
+eventlet
+pyserial

@@ -3,3 +3,9 @@ __pycache__/
 *.pkl
 dataset/
 .DS_Store
+
+# Models
+*.pt
+
+*.db
+temp_uploads/
