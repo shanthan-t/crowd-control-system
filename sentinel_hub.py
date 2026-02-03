@@ -6,6 +6,8 @@ import threading
 import serial
 import time
 import os
+import cv2
+import base64
 
 # --- Configuration ---
 DB_NAME = "sentinel_logs.db"
@@ -118,6 +120,17 @@ class SentinelHub:
                     self.serial_connection.write(msg.encode())
             except Exception as e:
                 print(f"[Hub] Serial Send Error: {e}")
+
+    def broadcast_frame(self, frame):
+        """Encodes and emits a video frame via Socket.IO."""
+        try:
+            # Resize for performance? Optional.
+            # _, buffer = cv2.imencode('.jpg', cv2.resize(frame, (640, 360)), [int(cv2.IMWRITE_JPEG_QUALITY), 50])
+            _, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+            b64_str = base64.b64encode(buffer).decode('utf-8')
+            sio.emit('video_frame', b64_str)
+        except Exception as e:
+            pass # drop frame on error
 
 # Singleton instance placeholder
 hub = None

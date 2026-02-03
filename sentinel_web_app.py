@@ -188,6 +188,7 @@ def main():
                     # For prototype, every frame is fine, or maybe check change.
                     # Let's log every frame for real-time socket updates.
                     hub.log_result(person_count, final_audio_status, risk)
+                    hub.broadcast_frame(annotated_frame) # Broadcast Video to React
                     # -------------------
 
                     # 5. Display Updates
@@ -312,6 +313,7 @@ def main():
 
                     # --- HUB LOGGING ---
                     hub.log_result(person_count, final_audio_status, risk)
+                    hub.broadcast_frame(annotated_frame) # Broadcast Video
                     # -------------------
 
                     # 4. Display
