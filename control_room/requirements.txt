@@ -1,0 +1,11 @@
+streamlit
+opencv-python
+numpy
+pyaudio
+librosa
+ultralytics
+pymongo
+bcrypt
+python-socketio
+eventlet
+pyserial

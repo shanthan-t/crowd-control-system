@@ -9,4 +9,5 @@ python-socketio
 pyserial
 bcrypt
 pymongo
-
+pandas
+plotly

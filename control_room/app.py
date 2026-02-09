@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import streamlit as st
 import cv2
 import numpy as np
@@ -6,8 +10,9 @@ import librosa
 import threading
 import time
 from ultralytics import YOLO
-import sentinel_hub  # Integration
-import sentinel_auth # Authentication
+import hub as sentinel_hub  # Local import since in same dir (moved)
+from shared import auth as sentinel_auth # Shared Auth
+
 
 # --- Configuration ---
 # YOLO_MODEL = "yolov8n.pt" # dynamic now
@@ -175,6 +180,8 @@ def sentinel_dashboard():
     use_roi = False
     roi_top, roi_bottom, roi_left, roi_right = 0.0, 1.0, 0.0, 1.0
 
+
+
     # --- Header ---
     st.title("🛡️ Sentinel Authority Dashboard")
     st.markdown("**Real-time Fusion of Computer Vision & Audio Analysis**")
@@ -196,13 +203,22 @@ def sentinel_dashboard():
         if stop_btn: st.session_state.running = False
 
         if st.session_state.running:
-            # Layout Selection (Authority Only)
+
+
+            # Placeholders
             video_placeholder = st.empty()
+            
+            # Metrics (Always Visible or only on Feed?) -> Let's keep them always visible at top for now, or just on Feed.
+            # User wants "separate place". Let's put metrics on top for both?
+            # Or usually Feed has the metrics.
+            
             c1, c2, c3, c4 = st.columns(4)
             m_people = c1.empty()
             m_skel = c2.empty()
             m_audio = c3.empty()
             m_risk = c4.empty()
+
+
             
             # Init Setup
             p = pyaudio.PyAudio()
@@ -291,17 +307,15 @@ def sentinel_dashboard():
                 hub.log_result(person_count, final_audio, risk)
                 hub.broadcast_frame(annotated_frame)
 
-                # --- Display ---
-                frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-                
-                # Authority Display
-                video_placeholder.image(frame_rgb, channels="RGB", width="stretch")
-                
+                # --- Update Metrics (Always) ---
                 m_people.metric("People Count", person_count)
                 m_skel.metric("Skeleton Data", skeleton_detected)
-                
                 m_audio.metric("Audio Audio", final_audio, delta_color="inverse")
                 m_risk.metric("Crowd Risk", risk, delta_color="inverse" if risk=="LOW" else "normal")
+
+                # --- Display ---
+                frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+                video_placeholder.image(frame_rgb, channels="RGB", width="stretch")
 
             # Cleanup
             if cap: cap.release()

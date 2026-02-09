@@ -1,16 +1,20 @@
-import sqlite3
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+import sqlite3 # Kept for legacy if needed, but primary is now MongoDB via shared
 import datetime
 import socketio
 import eventlet
 import threading
 import serial
 import time
-import os
 import cv2
 import base64
+from shared.db import get_db # MongoDB Log Access
 
 # --- Configuration ---
-DB_NAME = "sentinel_logs.db"
+DB_NAME = "sentinel_logs.db" # Legacy local backup
 SOCKET_PORT = 5000
 SERIAL_PORT = "/dev/ttyUSB0" # Default, can be changed via init
 SERIAL_BAUD = 9600
@@ -83,8 +87,13 @@ class SentinelHub:
         # 1. Terminal Output
         print(f"[{timestamp}] People: {people_count} | Audio: {audio_status} | Risk: {risk_level}")
 
-        # 2. Database Log
+        # 2. Database Log (MongoDB + SQLite Backup)
         try:
+            # MongoDB (Live for User Dashboard)
+            db = get_db()
+            db.log_event(people_count, audio_status, risk_level)
+            
+            # SQLite (Backup)
             with self.db_lock:
                 conn = sqlite3.connect(DB_NAME)
                 cursor = conn.cursor()
