@@ -3,3 +3,5 @@ pymongo
 bcrypt
 pandas
 plotly
+python-multipart
+Pillow

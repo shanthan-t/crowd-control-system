@@ -2,6 +2,7 @@ pyaudio
 librosa
 numpy
 streamlit
+streamlit-drawable-canvas
 scikit-learn
 opencv-python
 ultralytics
