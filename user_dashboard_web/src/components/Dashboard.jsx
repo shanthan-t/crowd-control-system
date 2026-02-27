@@ -6,7 +6,6 @@ import HistoryChart from './HistoryChart';
 import RadarSweep from './RadarSweep';
 import HeatmapVisualizer from './HeatmapVisualizer';
 import LiveCameraFeed from './public/LiveCameraFeed';
-import CrowdSafetyIndex from './CrowdSafetyIndex';
 import StaffAlertBanner from './StaffAlertBanner';
 
 const POLLING_INTERVAL = 2000;
@@ -14,8 +13,8 @@ const POLLING_INTERVAL = 2000;
 const Dashboard = ({ username, onLogout }) => {
     const [latest, setLatest] = useState(null);
     const [history, setHistory] = useState([]);
-    const [csiData, setCsiData] = useState(null);
     const [error, setError] = useState(null);
+    const [locationError, setLocationError] = useState(null);
     const [profileOpen, setProfileOpen] = useState(false);
     const [heatmapExpanded, setHeatmapExpanded] = useState(false);
 
@@ -31,6 +30,38 @@ const Dashboard = ({ username, onLogout }) => {
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, []);
+
+    // ── Geolocation Tracking ──────────────────────────────────────────────────
+    useEffect(() => {
+        if (!navigator.geolocation) {
+            setLocationError("Geolocation is not supported by your browser.");
+            return;
+        }
+
+        let lastSent = 0;
+        const watchId = navigator.geolocation.watchPosition(
+            (position) => {
+                setLocationError(null);
+                const now = Date.now();
+                // Send every 3 seconds max
+                if (now - lastSent >= 3000) {
+                    lastSent = now;
+                    axios.post('/api/mobile/location', {
+                        user_id: username,
+                        lat: position.coords.latitude,
+                        lng: position.coords.longitude,
+                        timestamp: now
+                    }).catch(() => { });
+                }
+            },
+            (err) => {
+                setLocationError("Location permission required for safety tracking.");
+            },
+            { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
+        );
+
+        return () => navigator.geolocation.clearWatch(watchId);
+    }, [username]);
 
     // ── Data polling ─────────────────────────────────────────────────────────
     useEffect(() => {
@@ -49,13 +80,6 @@ const Dashboard = ({ username, onLogout }) => {
                     setError('Telemetry bridge offline. Awaiting sensor sync...');
                 }
                 setHistory(historyRes.data);
-
-                if (aiRes.data?.csi !== undefined) {
-                    console.log("CSI DATA:", aiRes.data.csi);
-                    setCsiData(aiRes.data.csi);
-                } else {
-                    setCsiData({ crowd_safety_index: 0, current_count: 0, capacity_limit: 100 });
-                }
 
                 const activeCameras = camerasRes.data.cameras.filter(c => c.running);
                 setCameras(activeCameras);
@@ -199,6 +223,15 @@ const Dashboard = ({ username, onLogout }) => {
                     </div>
                 )}
 
+                {/* Location Error bar */}
+                {locationError && (
+                    <div className="db-error-bar scroll-reveal" style={{ background: 'rgba(234, 179, 8, 0.1)', border: '1px solid rgba(234, 179, 8, 0.3)', marginTop: error ? '12px' : '0' }}>
+                        <p className="text-yellow-400 text-sm font-medium flex items-center gap-3">
+                            <Activity size={15} /> {locationError}
+                        </p>
+                    </div>
+                )}
+
                 {/* ── LEFT COLUMN ─────────────────────────────────────────── */}
                 <div className="flex flex-col gap-6 w-full">
                     {/* Card 1 — Command Overview */}
@@ -248,11 +281,6 @@ const Dashboard = ({ username, onLogout }) => {
                         <div className="flex-1 min-h-[120px]">
                             <HistoryChart data={history} />
                         </div>
-                    </div>
-
-                    {/* NEW CARD — Crowd Safety Index */}
-                    <div className="flex-1 min-h-[220px] scroll-reveal delay-300">
-                        <CrowdSafetyIndex csi={csiData} />
                     </div>
                 </div>
 
@@ -336,7 +364,7 @@ const Dashboard = ({ username, onLogout }) => {
 
                             {/* Pure Heatmap Canvas Render (No video) */}
                             <div className="relative z-10 w-full h-full">
-                                <HeatmapVisualizer roomName="Room 1" />
+                                <HeatmapVisualizer roomName="Room 1" cameraId={selectedCamera} />
                             </div>
                         </div>
                     </div>

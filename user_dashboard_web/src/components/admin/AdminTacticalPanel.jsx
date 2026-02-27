@@ -5,7 +5,7 @@ import {
     Zap, AlertTriangle, AlertCircle, Info,
     TrendingUp, TrendingDown, Minus, Users,
     Camera, Activity, Shield, Loader, Radio,
-    Bell, CheckCircle, X, MapPin, UserPlus
+    Bell, CheckCircle, CheckCircle2, RefreshCw, X, UserPlus
 } from 'lucide-react';
 
 const API = '';
@@ -36,7 +36,7 @@ const parseStaffCount = (staffAction) => {
     return match ? parseInt(match[1], 10) : null;
 };
 
-/* ── Recommendation Card (with Deploy button) ────────────────────── */
+/* ── Recommended Card (with Deploy button) ─────────────────────── */
 const RecCard = ({ rec, onDeploy }) => {
     const config = SEVERITY_CONFIG[rec.severity] || SEVERITY_CONFIG.INFO;
     const Icon = config.icon;
@@ -89,6 +89,37 @@ const RecCard = ({ rec, onDeploy }) => {
     );
 };
 
+/* ── Isolated Stream Card (Prevents global re-renders per frame) ─── */
+const StreamCard = ({ camera }) => {
+    const [streamReady, setStreamReady] = useState(false);
+    const streamUrl = `${API}/api/cameras/stream/${camera.id}`;
+
+    return (
+        <div className="ai-stream-container">
+            <div className="ai-stream-header">
+                <Radio size={13} style={{ color: '#22c55e' }} />
+                <span>Live Feed</span>
+                <span className="ai-stream-cam-label">{camera.id}</span>
+            </div>
+            <div className="ai-stream-viewport">
+                {!streamReady && (
+                    <div className="ai-stream-loader">
+                        <Loader size={22} className="animate-spin" style={{ color: 'rgba(255,255,255,0.3)' }} />
+                        <span>Connecting to stream…</span>
+                    </div>
+                )}
+                <img
+                    src={streamUrl}
+                    alt={`Stream ${camera.id}`}
+                    className="ai-stream-img"
+                    onLoad={() => setStreamReady(true)}
+                    onError={() => setStreamReady(false)}
+                />
+            </div>
+        </div>
+    );
+};
+
 
 /* ── AdminTacticalPanel ──────────────────────────────────────────── */
 const AdminTacticalPanel = () => {
@@ -120,12 +151,12 @@ const AdminTacticalPanel = () => {
         return () => clearInterval(pollRef.current);
     }, []);
 
-    // ── Poll camera list for stream URLs ──────────────────────────────
+    // ── Poll for active cameras only ──────────────────────────────────
     useEffect(() => {
         let cancelled = false;
         const fetchCameras = async () => {
             try {
-                const { data: result } = await axios.get(`${API}/api/cameras/list`);
+                const { data: result } = await axios.get(`${API}/api/cameras/active`);
                 if (!cancelled) setCameras(result.cameras || []);
             } catch { /* backend down */ }
         };
@@ -133,23 +164,6 @@ const AdminTacticalPanel = () => {
         const interval = setInterval(fetchCameras, 3000);
         return () => { cancelled = true; clearInterval(interval); };
     }, []);
-
-    // Get running cameras for stream
-    const runningCameras = cameras.filter(c => c.running);
-    const primaryCam = runningCameras[0] || null;
-    const streamUrl = primaryCam
-        ? `${API}/api/cameras/stream/${primaryCam.camera_id}`
-        : null;
-
-    // Reset stream when primary camera changes
-    const prevCamId = useRef(null);
-    useEffect(() => {
-        if (primaryCam?.camera_id !== prevCamId.current) {
-            prevCamId.current = primaryCam?.camera_id || null;
-            setStreamReady(false);
-            setStreamKey(k => k + 1);
-        }
-    }, [primaryCam?.camera_id]);
 
     // Use zone_assessments from AI engine (the correct key)
     const zones = data?.zone_assessments || [];
@@ -172,7 +186,6 @@ const AdminTacticalPanel = () => {
             id: crypto.randomUUID(),
             room: roomName,
             requiredStaff: pendingDeploy.count,
-            csi: data?.csi?.crowd_safety_index ?? 0,
             count: data?.total_people ?? 0,
             createdAt: Date.now(),
             status: 'ACTIVE',
@@ -234,46 +247,24 @@ const AdminTacticalPanel = () => {
             {/* ── Live stream + Risk gauge row ─────────────────────── */}
             <div className="ai-tactical-grid">
 
-                {/* Left Column: Live Stream */}
+                {/* Left Column: Dynamic Streams Grid */}
                 <div className="ai-stream-panel">
-                    <div className="ai-stream-container">
-                        <div className="ai-stream-header">
-                            <Radio size={13} style={{ color: streamUrl ? '#22c55e' : 'rgba(255,255,255,0.2)' }} />
-                            <span>Live Feed</span>
-                            {primaryCam && (
-                                <span className="ai-stream-cam-label">{primaryCam.label}</span>
-                            )}
-                        </div>
-                        <div className="ai-stream-viewport">
-                            {streamUrl ? (
-                                <>
-                                    {!streamReady && (
-                                        <div className="ai-stream-loader">
-                                            <Loader size={22} className="animate-spin" style={{ color: 'rgba(255,255,255,0.3)' }} />
-                                            <span>Connecting to stream…</span>
-                                        </div>
-                                    )}
-                                    <img
-                                        key={streamKey}
-                                        src={streamUrl}
-                                        alt="Live Camera"
-                                        className="ai-stream-img"
-                                        onLoad={() => setStreamReady(true)}
-                                        onError={() => setStreamReady(false)}
-                                    />
-                                </>
-                            ) : (
+                    {cameras.length === 0 ? (
+                        <div className="ai-stream-container">
+                            <div className="ai-stream-viewport">
                                 <div className="ai-stream-offline">
                                     <Camera size={28} style={{ color: 'rgba(255,255,255,0.08)' }} />
-                                    <span>
-                                        {cameras.length === 0
-                                            ? 'No cameras added'
-                                            : 'All cameras stopped'}
-                                    </span>
+                                    <span>No active cameras connected</span>
                                 </div>
-                            )}
+                            </div>
                         </div>
-                    </div>
+                    ) : (
+                        <div className="cam-dynamic-grid">
+                            {cameras.map(cam => (
+                                <StreamCard key={cam.id} camera={cam} />
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 {/* Right Column: Risk Score on Top, Widgets Below */}
@@ -338,15 +329,15 @@ const AdminTacticalPanel = () => {
                             ) : (
                                 <div className="ai-cam-list">
                                     {cameras.map(cam => {
-                                        const zone = zones.find(z => z.zone_id === cam.camera_id);
+                                        const zone = zones.find(z => z.zone_id === cam.id);
                                         const densityPct = zone?.density
                                             ? Math.min((zone.density / 10) * 100, 100)
                                             : 0;
                                         return (
-                                            <div key={cam.camera_id} className="ai-cam-row">
+                                            <div key={cam.id} className="ai-cam-row">
                                                 <div className="ai-cam-row-left">
-                                                    <div className={`ai-cam-dot ${cam.running ? 'ai-cam-dot--on' : 'ai-cam-dot--off'}`} />
-                                                    <span className="ai-cam-name">{cam.label || cam.source_url}</span>
+                                                    <div className="ai-cam-dot ai-cam-dot--on" />
+                                                    <span className="ai-cam-name">{cam.id}</span>
                                                 </div>
                                                 <div className="ai-cam-row-right">
                                                     <span className="ai-cam-count">{cam.people || 0}p</span>
@@ -412,11 +403,10 @@ const AdminTacticalPanel = () => {
                             </div>
                             <div className="dispatch-active-info">
                                 <h4 className="dispatch-active-title">STAFF DISPATCHED</h4>
-                                <div className="dispatch-active-meta">
-                                    <span>Room: <strong>{dispatchEvent.room}</strong></span>
-                                    <span>Required: <strong>+{dispatchEvent.requiredStaff}</strong></span>
-                                    <span>CSI: <strong>{dispatchEvent.csi}</strong></span>
-                                </div>
+                                <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                                    AI engine has detected elevated crowding in <strong>{dispatchEvent.room}</strong>.
+                                    Estimated crowd count: <strong>{dispatchEvent.count}</strong>.
+                                </p>
                             </div>
                             <div className={`dispatch-active-status dispatch-active-status--${dispatchEvent.status.toLowerCase()}`}>
                                 {dispatchEvent.status === 'ACTIVE' && (

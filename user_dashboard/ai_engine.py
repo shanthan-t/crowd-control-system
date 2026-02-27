@@ -94,28 +94,18 @@ def _get_zone_weight(area_type: str) -> float:
 
 
 def _compute_risk_score(density_norm: float, velocity_norm: float,
-                         zone_weight_norm: float) -> float:
+                         zone_weight_norm: float,
+                         signal_boost: float = 0.0,
+                         acoustic_boost: float = 0.0) -> float:
     """
     Weighted risk score:
       risk = density_norm * 0.4 + velocity_norm * 0.4 + zone_weight_norm * 0.2
+      + signal_boost + acoustic_boost
     All inputs should be normalized to 0–1.
     """
     score = (density_norm * 0.4) + (velocity_norm * 0.4) + (zone_weight_norm * 0.2)
+    score += signal_boost + acoustic_boost
     return max(0.0, min(1.0, score))
-
-
-def compute_csi(current_count, capacity_limit):
-    try:
-        capacity = capacity_limit if capacity_limit and capacity_limit > 0 else 100
-        count = current_count if current_count is not None else 0
-
-        density_ratio = min(count / capacity, 1.0)
-        csi = int(density_ratio * 100)
-
-        return max(0, min(csi, 100))
-
-    except Exception:
-        return 0
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -230,8 +220,10 @@ def _confidence(density_norm: float, velocity_norm: float,
 #  Assessment Builder — per zone
 # ══════════════════════════════════════════════════════════════════════════
 
-def _assess_zone(session_dict: dict) -> ZoneAssessment:
-    """Build a full ZoneAssessment from a session summary dict."""
+def _assess_zone(session_dict: dict, signal_data: dict = None,
+                 acoustic_data: dict = None) -> ZoneAssessment:
+    """Build a full ZoneAssessment from a session summary dict.
+    Optionally incorporates multi-modal signal and acoustic data."""
 
     zone_id   = session_dict["camera_id"]
     label     = session_dict.get("label", zone_id)
@@ -247,8 +239,21 @@ def _assess_zone(session_dict: dict) -> ZoneAssessment:
     zone_weight   = _get_zone_weight(area_type)
     zone_w_norm   = min((zone_weight - 1.0) / 0.8, 1.0)  # 1.0→0, 1.8→1.0
 
-    # Risk score
-    risk_score = _compute_risk_score(density_norm, velocity_norm, zone_w_norm)
+    # Multi-modal risk boosts
+    signal_boost = 0.0
+    acoustic_boost = 0.0
+    if signal_data:
+        sig_count = signal_data.get("total_devices", 0)
+        if sig_count > density and density > 0:
+            # Scale boost: more occluded people → higher boost (max 0.15)
+            occluded_ratio = min((sig_count - density) / max(density, 1), 1.0)
+            signal_boost = occluded_ratio * 0.15
+    if acoustic_data and acoustic_data.get("anomaly", False):
+        acoustic_boost = 0.15
+
+    # Risk score (with multi-modal boosts)
+    risk_score = _compute_risk_score(density_norm, velocity_norm, zone_w_norm,
+                                     signal_boost, acoustic_boost)
 
     # Alert level
     alert = _alert_level(risk_score)
@@ -321,7 +326,7 @@ def get_recommendations(manager) -> dict:
     # ── Per-zone assessments ──────────────────────────────────────────
     assessments: List[ZoneAssessment] = []
     for s in sessions:
-        za = _assess_zone(s)
+        za = _assess_zone(s, None, None)
         assessments.append(za)
 
     # ── Global aggregation ─────────────────────────────────────────────
@@ -381,22 +386,12 @@ def get_recommendations(manager) -> dict:
             "staff_action": "Staff Adequate",
         })
 
-    # Safety Index Score
-    cam_count = max(1, len(running_zones))
-    capacity_limit = cam_count * max(CROWD_DANGER * 2, 50)
-    csi_value = compute_csi(total_people, capacity_limit)
-    csi_data = {
-        "current_count": total_people or 0,
-        "capacity_limit": capacity_limit or 100,
-        "crowd_safety_index": csi_value
-    }
-
     # ── Dispatch trigger check ─────────────────────────────────────────
     dispatch_alert = None
     try:
         from user_dashboard import dispatch
-        if dispatch.check_dispatch_required(csi_value, total_people, capacity_limit):
-            pending = dispatch.create_dispatch("Room 1", csi_value, total_people)
+        if dispatch.check_dispatch_required(total_people, capacity_limit):
+            pending = dispatch.create_dispatch("Room 1", total_people)
             if pending and pending["status"] in ("pending", "active", "assigned"):
                 dispatch_alert = pending
         else:
@@ -408,7 +403,6 @@ def get_recommendations(manager) -> dict:
     return {
         "risk_score": round(global_risk, 3),
         "risk_level": global_alert,
-        "csi": csi_data,
         "trend": trend,
         "trend_slope": round(avg_velocity, 2),
         "total_people": total_people,

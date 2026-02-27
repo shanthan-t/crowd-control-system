@@ -91,6 +91,39 @@ class Database:
             print(f"[DB] Staff Update Error: {e}")
             return False
 
+    # --- Fused Multi-Modal Logging ---
+    def log_fused_event(self, vision_count, signal_count, acoustic_db,
+                        anomaly, risk_level, zone_data=None):
+        """Logs a fused multi-modal event to the crowd_log collection."""
+        import datetime
+        event = {
+            "timestamp": datetime.datetime.now(),
+            "vision_count": vision_count,
+            "signal_count": signal_count,
+            "acoustic_db": acoustic_db,
+            "anomaly": anomaly,
+            "risk_level": risk_level,
+            "zone_data": zone_data or {},
+        }
+        try:
+            if not hasattr(self, 'crowd_log'):
+                self.crowd_log = self.db["crowd_log"]
+                self.crowd_log.create_index([("timestamp", -1)])
+            self.crowd_log.insert_one(event)
+        except Exception as e:
+            print(f"[DB] Fused log error: {e}")
+
+    def get_recent_fused_logs(self, limit=50):
+        """Retrieve recent fused multi-modal logs."""
+        try:
+            if not hasattr(self, 'crowd_log'):
+                self.crowd_log = self.db["crowd_log"]
+            cursor = self.crowd_log.find(sort=[("timestamp", -1)]).limit(limit)
+            return list(cursor)[::-1]
+        except Exception as e:
+            print(f"[DB] Fused read error: {e}")
+            return []
+
     # --- Staff Management ---
     def delete_staff(self, staff_id):
         """Deletes a staff member by ID (Robust)."""

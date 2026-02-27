@@ -2060,6 +2060,19 @@ h6 {
 .ai-stream-panel {
   display: flex;
   flex-direction: column;
+  width: 100%;
+}
+
+.cam-dynamic-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  gap: 20px;
+  width: 100%;
+}
+
+/* Ensure empty state is centered if no cameras exist */
+.ai-stream-panel:has(.ai-stream-offline) {
+  justify-content: center;
 }
 
 .ai-stats-panel {
@@ -4935,4 +4948,11 @@ h6 {
 .dispatch-resolve-btn:hover {
   background: rgba(34, 197, 94, 0.18);
   box-shadow: 0 2px 8px rgba(34, 197, 94, 0.2);
+}
+
+.mm-status-chip--alert {
+  background: rgba(239, 68, 68, 0.06);
+  border-color: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  animation: mm-anomaly-flash 1.5s ease-in-out infinite;
 }

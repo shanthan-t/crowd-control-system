@@ -14,10 +14,10 @@ import uuid
 from typing import Optional, Dict, List
 
 # ══════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════
 #  Configuration
 # ══════════════════════════════════════════════════════════════════════════
 
-CSI_THRESHOLD = 70          # Dispatch if CSI > this
 DENSITY_THRESHOLD = 0.8     # Dispatch if count/capacity > this
 COOLDOWN_SECONDS = 60       # Min seconds between dispatches
 STAFF_TO_DEPLOY = 2         # Recommended staff per dispatch
@@ -64,15 +64,15 @@ def _sorted_staff_by_distance(target: Dict) -> List[Dict]:
 #  Public API
 # ══════════════════════════════════════════════════════════════════════════
 
-def check_dispatch_required(csi: int, count: int, capacity: int) -> bool:
+def check_dispatch_required(count: int, capacity: int) -> bool:
     """Hard threshold check — no ML."""
     if capacity <= 0:
         return False
     density_ratio = count / capacity
-    return csi > CSI_THRESHOLD or density_ratio > DENSITY_THRESHOLD
+    return density_ratio > DENSITY_THRESHOLD
 
 
-def create_dispatch(room: str, csi: int, count: int) -> Optional[Dict]:
+def create_dispatch(room: str, count: int) -> Optional[Dict]:
     """
     Create a PENDING dispatch if conditions met and cooldown elapsed.
     Returns the dispatch object or None if suppressed.
@@ -97,7 +97,6 @@ def create_dispatch(room: str, csi: int, count: int) -> Optional[Dict]:
             "dispatch_id": dispatch_id,
             "status": "pending",        # pending → active → assigned → completed
             "room": room,
-            "csi": csi,
             "count": count,
             "recommended_staff": STAFF_TO_DEPLOY,
             "staff": staff_sorted,

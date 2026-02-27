@@ -65,6 +65,7 @@ function buildTurboLUT() {
 
 const HeatmapCanvas = ({
     sseUrl = '/api/heatmap/stream',
+    blueprintUrl = null,
     showStatus = true,
     onData = null,
 }) => {
@@ -83,21 +84,33 @@ const HeatmapCanvas = ({
     const needsRedrawRef = useRef(false);
     const rafRef = useRef(null);
 
-    // ── Check calibration status ─────────────────────────────────
+    // ── Check blueprint status ─────────────────────────────────
     useEffect(() => {
+        if (!blueprintUrl) {
+            setCalibrated(false);
+            setBlueprintSrc(null);
+            return;
+        }
+
         let cancelled = false;
-        (async () => {
-            try {
-                const resp = await fetch('/api/calibration/status');
-                const data = await resp.json();
-                if (!cancelled && data.calibrated) {
-                    setCalibrated(true);
-                    setBlueprintSrc('/api/calibration/blueprint');
-                }
-            } catch { /* backend not up */ }
-        })();
+        const img = new Image();
+        img.onload = () => {
+            if (!cancelled) {
+                setCalibrated(true);
+                setBlueprintSrc(blueprintUrl);
+                needsRedrawRef.current = true;
+            }
+        };
+        img.onerror = () => {
+            if (!cancelled) {
+                setCalibrated(false);
+                setBlueprintSrc(null);
+            }
+        };
+        img.src = `${blueprintUrl}?t=${Date.now()}`;
+
         return () => { cancelled = true; };
-    }, []);
+    }, [blueprintUrl]);
 
     // ── SSE connection ───────────────────────────────────────────
     useEffect(() => {

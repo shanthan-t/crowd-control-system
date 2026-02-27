@@ -132,67 +132,6 @@ def _risk_level(score: float) -> str:
         return "MEDIUM"
     return "LOW"
 
-def _calculate_safety_index(current_count: int, trend_slope: float, active_cameras: int) -> dict:
-    """
-    Computes a mathematical Crowd Safety Index (0-100).
-    Weights: 40% Density, 30% Prediction (5min), 30% Growth
-    """
-    # Guard against 0 active cameras
-    cam_count = max(1, active_cameras)
-    
-    # 1. Base Variables
-    # We dynamically approximate capacity. E.g 50 persons per camera view
-    capacity_limit = cam_count * max(CROWD_DANGER * 2, 50) 
-    
-    # 5-minute prediction (slope is persons/sec * 300 seconds)
-    predicted_count_5min = max(0, int(current_count + (trend_slope * 300)))
-    
-    # Growth rate count 
-    growth_rate = max(predicted_count_5min - current_count, 0)
-
-    # 2. Score Components
-    density_ratio = current_count / capacity_limit
-    density_score = min(density_ratio * 100.0, 100.0)
-    
-    prediction_ratio = predicted_count_5min / capacity_limit
-    prediction_score = min(prediction_ratio * 100.0, 100.0)
-    
-    growth_ratio = growth_rate / capacity_limit
-    growth_score = min(growth_ratio * 100.0, 100.0)
-
-    # 3. Final Weighted Score
-    final_score = (
-        (density_score * 0.4) +
-        (prediction_score * 0.3) +
-        (growth_score * 0.3)
-    )
-    
-    # Clamp to integer 0-100
-    csi = max(0, min(100, int(final_score)))
-    
-    # Level logic
-    if csi <= 30:
-        level, color = "SAFE", "green"
-    elif csi <= 60:
-        level, color = "MODERATE", "yellow"
-    elif csi <= 80:
-        level, color = "HIGH RISK", "orange"
-    else:
-        level, color = "CRITICAL", "red"
-
-    return {
-        "score": csi,
-        "level": level,
-        "color": color,
-        "metrics": {
-            "density_score": round(density_score, 1),
-            "prediction_score": round(prediction_score, 1),
-            "growth_score": round(growth_score, 1),
-            "predicted_count_5min": predicted_count_5min,
-            "capacity_limit": capacity_limit
-        }
-    }
-
 
 # ── Recommendation Rules ──────────────────────────────────────────────────
 
@@ -352,12 +291,6 @@ def get_recommendations(manager) -> dict:
     risk_score = _compute_risk_score(
         total_people, max_people_single, audio_panic, trend_slope
     )
-    risk_level = _risk_level(risk_score)
-
-    # Crowd Safety Index
-    active_cameras = len([c for c in camera_summaries if c.running])
-    csi_data = _calculate_safety_index(total_people, trend_slope, active_cameras)
-
     # Recommendations
     recs = _generate_recommendations(
         camera_summaries, total_people, risk_score,
@@ -367,7 +300,6 @@ def get_recommendations(manager) -> dict:
     return {
         "risk_score": round(risk_score, 3),
         "risk_level": risk_level,
-        "csi": csi_data,
         "trend": trend_label,
         "trend_slope": round(trend_slope, 2),
         "total_people": total_people,

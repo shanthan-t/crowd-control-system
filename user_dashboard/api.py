@@ -11,6 +11,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from shared import auth, db
 from shared import jwt_utils
 from user_dashboard import monitor
+from user_dashboard import mobile_tracker
 from fastapi import File, UploadFile
 from fastapi.responses import FileResponse
 import shutil
@@ -25,6 +26,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(mobile_tracker.router)
 
 # ── Seed admin on startup ───────────────────────────────────────────────────
 
@@ -124,6 +127,18 @@ def cameras_list():
     return {"cameras": mgr.list_sessions()}
 
 
+@app.get("/api/cameras/active")
+def cameras_active():
+    """Returns ONLY cameras that are currently running/connected."""
+    mgr = monitor.get_manager()
+    sessions = mgr.list_sessions()
+    active = [
+        {"id": cam["camera_id"], "status": "connected"} 
+        for cam in sessions if cam.get("running")
+    ]
+    return {"cameras": active}
+
+
 @app.get("/api/cameras/stream/admin/{camera_id}")
 def cameras_stream_admin(camera_id: str):
     """MJPEG admin stream for a specific camera (no blur)."""
@@ -134,6 +149,8 @@ def cameras_stream_admin(camera_id: str):
 
     def _generate():
         while True:
+            with session.stream_event:
+                session.stream_event.wait(timeout=1.0)
             frame = mgr.get_frame(camera_id, stream_type="admin")
             if not frame:
                 time.sleep(0.01)
@@ -145,7 +162,6 @@ def cameras_stream_admin(camera_id: str):
                 frame +
                 b"\r\n"
             )
-            time.sleep(0.033)  # ~30 fps
 
     return StreamingResponse(
         _generate(),
@@ -162,6 +178,8 @@ def cameras_stream_public(camera_id: str):
 
     def _generate():
         while True:
+            with session.stream_event:
+                session.stream_event.wait(timeout=1.0)
             frame = mgr.get_frame(camera_id, stream_type="public")
             if not frame:
                 time.sleep(0.01)
@@ -173,7 +191,6 @@ def cameras_stream_public(camera_id: str):
                 frame +
                 b"\r\n"
             )
-            time.sleep(0.033)  # ~30 fps
 
     return StreamingResponse(
         _generate(),
@@ -190,6 +207,8 @@ def cameras_stream(camera_id: str):
 
     def _generate():
         while True:
+            with session.stream_event:
+                session.stream_event.wait(timeout=1.0)
             frame = mgr.get_frame(camera_id, stream_type="admin")
             if not frame:
                 time.sleep(0.01)
@@ -202,7 +221,6 @@ def cameras_stream(camera_id: str):
                 frame +
                 b"\r\n"
             )
-            time.sleep(0.033)  # ~30 fps
 
     return StreamingResponse(
         _generate(),
@@ -442,9 +460,6 @@ def dispatch_staff_stream():
             "X-Accel-Buffering": "no",
         },
     )
-
-# ══════════════════════════════════════════════════════════════════════════
-
 @app.post("/api/monitor/start")
 def monitor_start(req: MonitorStartRequest):
     """Start the YOLO detection loop in a background thread."""

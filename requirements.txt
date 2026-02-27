@@ -12,3 +12,7 @@ bcrypt
 pymongo
 pandas
 plotly
+scapy
+sounddevice
+requests
+mediapipe

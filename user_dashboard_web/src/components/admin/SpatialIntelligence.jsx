@@ -15,9 +15,9 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import {
     Activity, Radar, Camera, ShieldAlert,
-    Layers, Maximize, MapPin, Upload
+    Layers, Maximize, MapPin, Upload, Smartphone
 } from 'lucide-react';
-import CrowdSafetyIndex from '../CrowdSafetyIndex';
+import MobileMap from './MobileMap';
 
 const PERFORMANCE_CONFIG = {
     gridRows: 30,
@@ -339,11 +339,14 @@ const SpatialIntelligence = () => {
     const [viewMode, setViewMode] = useState('Room 1'); // 'Room 1' or 'Camera'
 
     const [peopleCount, setPeopleCount] = useState(0);
+    const [mode, setMode] = useState("vision"); // "vision" | "mobile"
+    const [mobileCount, setMobileCount] = useState(0);
 
     // States driving the UI workflow
     const [blueprintExists, setBlueprintExists] = useState(true); // Assume true, verify on fetch
     const [blueprintUrl, setBlueprintUrl] = useState('');
     const [isReady, setIsReady] = useState(true);
+    const [forceCalibration, setForceCalibration] = useState(false);
 
     // Try finding an active camera on mount if none selected
     useEffect(() => {
@@ -418,6 +421,7 @@ const SpatialIntelligence = () => {
     // ── SSE connection ───────────────────────────────────────────
     useEffect(() => {
         if (viewMode === 'Camera' && !selectedCamera) return;
+        if (mode !== 'vision') return; // Only apply SSE in vision mode
 
         let es;
         try {
@@ -446,27 +450,74 @@ const SpatialIntelligence = () => {
         es.onerror = () => setConnected(false);
 
         return () => {
-            es.close();
-            setConnected(false);
+            if (es) es.close();
+            if (mode === 'vision') setConnected(false);
         };
-    }, [sseUrl, selectedCamera, viewMode]);
+    }, [sseUrl, selectedCamera, viewMode, mode]);
+
+    // ── Mobile mode polling ──────────────────────────────────────
+    const [mobilePositions, setMobilePositions] = useState([]);
+
+    useEffect(() => {
+        if (mode !== 'mobile') return;
+
+        let cancelled = false;
+
+        const fetchMobileData = async () => {
+            try {
+                const res = await fetch("/api/mobile/active");
+                if (!res.ok) throw new Error("API error");
+                const data = await res.json();
+                if (cancelled) return;
+
+                setMobileCount(data.active_users || 0);
+                setMobilePositions(data.positions || []);
+                setIsReady(true);
+                setConnected(true);
+            } catch (err) {
+                if (!cancelled) setConnected(false);
+            }
+        };
+
+        fetchMobileData();
+        const interval = setInterval(fetchMobileData, 3000);
+
+        return () => {
+            cancelled = true;
+            clearInterval(interval);
+            if (mode === 'mobile') setConnected(false);
+        };
+    }, [mode]);
 
     // ── Draw Static Blueprint Layer ──────────────────────────────
     // Drawn exactly ONE time when the image loads.
     const drawBackground = () => {
         const canvas = bgCanvasRef.current;
-        const img = bgImgRef.current;
-        if (!canvas || !img) return;
+        if (!canvas) return;
         const ctx = canvas.getContext('2d');
         const w = canvas.width;
         const h = canvas.height;
 
         ctx.clearRect(0, 0, w, h);
 
-        // Disable smoothing to guarantee untouched original pixels
-        ctx.imageSmoothingEnabled = false;
-
-        ctx.drawImage(img, 0, 0, w, h);
+        const img = bgImgRef.current;
+        if (img) {
+            // Disable smoothing to guarantee untouched original pixels
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(img, 0, 0, w, h);
+        } else if (mode === 'mobile') {
+            // Draw a subtle grid fallback for mobile mode
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, w, h);
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 1;
+            for (let x = 0; x < w; x += 40) {
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+            }
+            for (let y = 0; y < h; y += 40) {
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+            }
+        }
     };
 
     // ── Render Area Layers ──────────────────────────────────────
@@ -531,8 +582,9 @@ const SpatialIntelligence = () => {
     // ── Animation Loop ──────────────────────────────────────────
     useEffect(() => {
         const loop = () => {
-            // Only redraw the overlay layers. Background remains completely untouched.
-            if (needsRedrawRef.current && latestRef.current && bgImgRef.current) {
+            // Mobile mode rendering can proceed without a static blueprint
+            const canRedraw = needsRedrawRef.current && latestRef.current && (bgImgRef.current || mode === 'mobile');
+            if (canRedraw) {
                 renderHeatmap(latestRef.current);
                 renderPoints(latestRef.current);
                 needsRedrawRef.current = false;
@@ -543,18 +595,19 @@ const SpatialIntelligence = () => {
         return () => {
             if (rafRef.current) cancelAnimationFrame(rafRef.current);
         };
-    }, [renderHeatmap, renderPoints]);
+    }, [renderHeatmap, renderPoints, mode]);
 
-    // ── Redraw on control changes ───────────────────────────────
     useEffect(() => {
         needsRedrawRef.current = true;
-    }, []);
+        drawBackground(); // Force background redraw if mode switches
+    }, [mode, viewMode, selectedCamera]);
 
 
     // Determine UI State
-    const showUploader = viewMode === 'Camera' && connected && !blueprintExists;
-    const showCalibration = viewMode === 'Camera' && connected && blueprintExists && !isReady;
-    const showVisualizer = connected && (viewMode === 'Room 1' || (blueprintExists && isReady));
+    const isMobileMode = mode === 'mobile';
+    const showUploader = !isMobileMode && viewMode === 'Camera' && connected && !blueprintExists;
+    const showCalibration = !isMobileMode && viewMode === 'Camera' && connected && blueprintExists && (!isReady || forceCalibration);
+    const showVisualizer = connected && !showCalibration && (isMobileMode || viewMode === 'Room 1' || (blueprintExists && isReady));
 
     // Strict css rules for stacked canvases ensuring perfect aspect scaling through CSS 
     // without altering their exact internal pixel counts.
@@ -577,6 +630,7 @@ const SpatialIntelligence = () => {
                     cameraId={selectedCamera}
                     blueprintUrl={blueprintUrl}
                     onComplete={() => {
+                        setForceCalibration(false);
                         setIsReady(true);
                         checkBlueprint(); // Remount dimensions if needed
                     }}
@@ -586,12 +640,18 @@ const SpatialIntelligence = () => {
             {/* ── Left: Layered canvas stack ───────────────────── */}
             <div className="sd-canvas-wrap" ref={containerRef} style={{ position: 'relative', overflow: 'hidden', background: '#000' }}>
 
-                {showVisualizer && (
+                {showVisualizer && !isMobileMode && (
                     <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         {/* All 3 canvases perfectly layered and CSS styled identically */}
                         <canvas ref={bgCanvasRef} style={{ ...strictCanvasStyle, zIndex: 1 }} />
                         <canvas ref={heatCanvasRef} style={{ ...strictCanvasStyle, zIndex: 2 }} />
                         <canvas ref={pointsCanvasRef} style={{ ...strictCanvasStyle, zIndex: 3 }} />
+                    </div>
+                )}
+
+                {showVisualizer && isMobileMode && (
+                    <div style={{ position: 'absolute', inset: 0, zIndex: 1 }}>
+                        <MobileMap positions={mobilePositions} />
                     </div>
                 )}
 
@@ -607,13 +667,13 @@ const SpatialIntelligence = () => {
                         {connected && showVisualizer && <span className="sd-status-live">LIVE</span>}
                         {showVisualizer && (
                             <span className="sd-status-count">
-                                {peopleCount} {peopleCount === 1 ? 'person' : 'people'}
+                                {mode === 'mobile' ? mobileCount : peopleCount} {mode === 'mobile' ? 'mobile participants' : (peopleCount === 1 ? 'person' : 'people')}
                             </span>
                         )}
                     </div>
                 )}
 
-                {showVisualizer && (
+                {showVisualizer && !isMobileMode && (
                     <div className="sd-legend" style={{ zIndex: 10 }}>
                         <span className="sd-legend-label">Low</span>
                         <div className="sd-legend-bar" />
@@ -621,11 +681,19 @@ const SpatialIntelligence = () => {
                     </div>
                 )}
 
-                {(!connected) && (
+                {(!connected && !isMobileMode) && (
                     <div className="sd-empty">
                         <div className="sd-empty-title">Waiting for connection</div>
                         <div className="sd-empty-sub">
                             Ensure a camera is active and running
+                        </div>
+                    </div>
+                )}
+                {(!connected && isMobileMode) && (
+                    <div className="sd-empty">
+                        <div className="sd-empty-title">Offline</div>
+                        <div className="sd-empty-sub">
+                            Awaiting real-time GPS connections...
                         </div>
                     </div>
                 )}
@@ -634,11 +702,32 @@ const SpatialIntelligence = () => {
             {/* ── Right: Controls + stats ──────────────────────── */}
             <div className="sd-panel">
                 <div className="sd-panel-section">
-                    <div className="sd-panel-label">
+                    <div className="sd-panel-label" style={{ marginBottom: '8px' }}>
                         <Layers size={12} />
+                        Sensing Mode
+                    </div>
+                    <div style={{ display: 'flex', gap: '4px', background: '#0f172a', padding: '4px', borderRadius: '6px', border: '1px solid #334155' }}>
+                        <button
+                            onClick={() => setMode('vision')}
+                            style={{ flex: 1, padding: '6px 0', borderRadius: '4px', background: mode === 'vision' ? '#3b82f6' : 'transparent', color: 'white', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px' }}>
+                            <Camera size={14} /> Vision
+                        </button>
+                        <button
+                            onClick={() => setMode('mobile')}
+                            style={{ flex: 1, padding: '6px 0', borderRadius: '4px', background: mode === 'mobile' ? '#10b981' : 'transparent', color: 'white', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px' }}>
+                            <Smartphone size={14} /> Mobile
+                        </button>
+                    </div>
+                </div>
+
+                <div className="sd-panel-divider" />
+
+                <div className="sd-panel-section">
+                    <div className="sd-panel-label">
+                        <Activity size={12} />
                         Model Status
                     </div>
-                    <div className="sd-panel-value">
+                    <div className="sd-panel-value" style={{ fontSize: '12px' }}>
                         {!connected ? 'Disconnected' :
                             !blueprintExists ? 'Needs Blueprint' :
                                 !isReady ? 'Pending Calibration' : 'Active (Bird\'s-Eye)'}
@@ -650,25 +739,11 @@ const SpatialIntelligence = () => {
                 <div className="sd-panel-section">
                     <div className="sd-panel-label">
                         <Activity size={12} />
-                        People Count
+                        {mode === 'mobile' ? 'Active Mobile Participants' : 'People Count'}
                     </div>
                     <div className="sd-panel-value sd-panel-value--large">
-                        {showVisualizer ? peopleCount : '--'}
+                        {showVisualizer ? (mode === 'mobile' ? mobileCount : peopleCount) : '--'}
                     </div>
-                </div>
-
-                <div className="sd-panel-divider" />
-
-                <div className="sd-panel-section">
-                    <div className="sd-panel-label" style={{ marginBottom: "0.5rem" }}>
-                        <ShieldAlert size={12} />
-                        Crowd Safety Index
-                    </div>
-                    <CrowdSafetyIndex csi={{
-                        crowd_safety_index: Math.min(100, Math.round((peopleCount / 200) * 100)),
-                        current_count: peopleCount,
-                        capacity_limit: 200
-                    }} />
                 </div>
 
                 <div className="sd-panel-divider" />
@@ -693,20 +768,30 @@ const SpatialIntelligence = () => {
                             </select>
 
                             {viewMode === 'Camera' && (
-                                <select
-                                    className="sd-camera-select"
-                                    value={selectedCamera}
-                                    onChange={(e) => {
-                                        setSelectedCamera(e.target.value);
-                                    }}
-                                >
-                                    {cameras.map((c) => (
-                                        <option key={c.camera_id} value={c.camera_id}>
-                                            {c.label || c.camera_id.slice(0, 8)}
-                                            {c.running ? ' ●' : ''}
-                                        </option>
-                                    ))}
-                                </select>
+                                <>
+                                    <select
+                                        className="sd-camera-select"
+                                        value={selectedCamera}
+                                        onChange={(e) => {
+                                            setSelectedCamera(e.target.value);
+                                        }}
+                                    >
+                                        {cameras.map((c) => (
+                                            <option key={c.camera_id} value={c.camera_id}>
+                                                {c.label || c.camera_id.slice(0, 8)}
+                                                {c.running ? ' ●' : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    {!isMobileMode && blueprintExists && (
+                                        <button
+                                            onClick={() => setForceCalibration(true)}
+                                            style={{ marginTop: '12px', width: '100%', padding: '6px', background: '#334155', color: '#f8fafc', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
+                                        >
+                                            Recalibrate Camera
+                                        </button>
+                                    )}
+                                </>
                             )}
                         </>
                     ) : (

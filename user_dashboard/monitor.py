@@ -13,20 +13,15 @@ SENTINEL_DEBUG = os.environ.get("SENTINEL_DEBUG", "0") == "1"
 
 from user_dashboard.spatial_engine import SpatialEngine, extract_bbox_centers
 from user_dashboard.tracker import CentroidTracker
+from user_dashboard.face_tracker import FaceMeshTracker
 
 import cv2
 import numpy as np
 import threading
 import time
 import uuid
+import queue
 from collections import deque
-
-try:
-    import pyaudio
-    import librosa
-    AUDIO_AVAILABLE = True
-except ImportError:
-    AUDIO_AVAILABLE = False
 
 try:
     from ultralytics import YOLO
@@ -37,8 +32,6 @@ except ImportError:
 from shared import db as shared_db
 
 # ── Configuration ──────────────────────────────────────────────────────────
-AUDIO_RATE    = 22050
-AUDIO_CHUNK   = 1024
 CONF_THRESH   = 0.4
 IMG_SIZE      = 640
 IOU_THRESH    = 0.5
@@ -58,37 +51,34 @@ MODEL_NAME = "yolov8n.pt"   # switched from yolov8m — 5× faster, pure detecti
 
 # ── Face Blurring (Privacy Mode) ───────────────────────────────────────────
 try:
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    import mediapipe as mp
+    from mediapipe.tasks import python
+    from mediapipe.tasks.python import vision
+    
+    _model_path = os.path.join(os.path.dirname(__file__), "face_landmarker.task")
+    _base_options = python.BaseOptions(model_asset_path=_model_path)
+    _options = vision.FaceLandmarkerOptions(
+        base_options=_base_options,
+        num_faces=10,
+        min_face_detection_confidence=0.4,
+        min_face_presence_confidence=0.4,
+        min_tracking_confidence=0.4
+    )
+    face_mesh = vision.FaceLandmarker.create_from_options(_options)
+    FACE_AVAILABLE = True
 except Exception as e:
-    print(f"Warning: Failed to load face cascade: {e}")
-    face_cascade = None
+    print(f"Warning: Failed to load MediaPipe Face Mesh: {e}")
+    FACE_AVAILABLE = False
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
-def _get_risk(audio_status: str, count: int):
+def _get_risk(count: int):
     if count >= CROWD_DANGER:
         return "HIGH", "DANGEROUS"
-    if audio_status == "PANIC" or count >= CROWD_SAFE:
+    if count >= CROWD_SAFE:
         return "MEDIUM", "CAUTION"
     return "LOW", "SAFE"
-
-
-def _analyze_audio(stream) -> str:
-    """Returns 'PANIC' or 'NORMAL'."""
-    if not AUDIO_AVAILABLE or stream is None:
-        return "NORMAL"
-    try:
-        if stream.get_read_available() >= AUDIO_CHUNK:
-            data = stream.read(AUDIO_CHUNK, exception_on_overflow=False)
-            y = np.frombuffer(data, dtype=np.float32)
-            rms  = float(np.mean(librosa.feature.rms(y=y)))
-            cent = float(np.mean(librosa.feature.spectral_centroid(y=y, sr=AUDIO_RATE)))
-            if rms > 0.05 and cent > 2000:
-                return "PANIC"
-    except Exception:
-        pass
-    return "NORMAL"
 
 
 def _frame_to_jpeg(frame_bgr) -> bytes:
@@ -123,31 +113,39 @@ class CameraSession:
         self.latest_blurred_jpeg = None      # face-blurred frame (inference)
         self.metrics = {
             "people": 0, "risk": "LOW",
-            "safety": "SAFE", "audio": "NORMAL",
+            "safety": "SAFE",
         }
 
         self._grabber_thread = None     # frame-grabber thread
         self._inference_thread = None   # YOLO inference thread
         self._cap = None
-        self._audio_pa = None
-        self._audio_stream = None
         self._model = None
 
-        # ── Atomic frame swap (grabber → inference) ────────────────
+        # ── 3-Stage Pipeline State ────────────────
         self._grab_lock = threading.Lock()
-        self._latest_raw_frame = None   # always the most recent frame
+        self._latest_raw_frame = None
+
+        self._infer_lock = threading.Lock()
+        # Stores: (boxes_np, confs_np, face_lms_smoothed, raw_centers, p_count)
+        self._latest_infer_res = (np.empty((0, 4)), np.array([]), [], [], 0)
+        
+        self.stream_event = threading.Condition()
 
         # Automatic bird's-eye spatial engine (per camera)
         self._spatial = SpatialEngine()
 
         # Centroid tracker for temporal smoothing
         self._tracker = CentroidTracker()
+        self._face_tracker = FaceMeshTracker(max_disappeared=10, match_radius=100.0)
 
         # ── AI engine state ────────────────────────────────────────
         self.density_history: deque = deque(maxlen=30)   # (timestamp, people_count)
         self.velocity_smooth: float = 0.0                 # EMA-smoothed velocity
         self.staff_count: int = 0                         # assigned staff
-
+        
+        # ── FPS Metrics ──────────────────────────────────────────
+        self.fps_metrics = {"grab": 0.0, "infer": 0.0, "stream": 0.0}
+        
         self.created_at = time.time()
         self.error = None  # last error message
 
@@ -164,6 +162,7 @@ class CameraSession:
                 "spatial_ready": bool(self._spatial and self._spatial.ready),
                 "staff_count": self.staff_count,
                 "velocity": round(self.velocity_smooth, 3),
+                "fps": self.fps_metrics,
                 **dict(self.metrics),
             }
 
@@ -173,37 +172,36 @@ class CameraSession:
 # ══════════════════════════════════════════════════════════════════════════
 
 def _grabber_loop(session: CameraSession):
-    """Continuously reads frames from the camera as fast as possible.
-
-    Stores only the most recent frame via atomic swap.
-    The MJPEG stream endpoint reads session.latest_jpeg which is
-    set here (raw frame encoded to JPEG — no inference overlay).
-    This guarantees near-real-time streaming regardless of YOLO speed.
+    """STAGE 1: Capture Thread
+    Continuously reads frames as fast as possible. No inference.
+    Stores only the most recent frame via grab_lock.
     """
     tag = f"[Grabber {session.id[:8]}]"
 
-    # Open video source with buffer disabled
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay"
     resolved = int(session.source_url) if str(session.source_url).isdigit() else session.source_url
     cap = None
-    for attempt in range(RECONNECT_ATTEMPTS):
-        cap = cv2.VideoCapture(resolved)
-        if cap.isOpened():
-            # Disable internal OpenCV buffering — read always gets latest
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            break
-        print(f"{tag} Cannot open source (attempt {attempt + 1}/{RECONNECT_ATTEMPTS}): {session.source_url}")
-        cap.release()
-        cap = None
-        if attempt < RECONNECT_ATTEMPTS - 1:
-            time.sleep(RECONNECT_DELAY)
+    
+    def _connect():
+        nonlocal cap
+        for attempt in range(RECONNECT_ATTEMPTS):
+            cap = cv2.VideoCapture(resolved, cv2.CAP_FFMPEG) if isinstance(resolved, str) else cv2.VideoCapture(resolved)
+            if cap.isOpened():
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                return True
+            print(f"{tag} Cannot open source (attempt {attempt + 1}/{RECONNECT_ATTEMPTS}): {session.source_url}")
+            cap.release()
+            cap = None
+            if attempt < RECONNECT_ATTEMPTS - 1:
+                time.sleep(RECONNECT_DELAY)
+        return False
 
-    if cap is None or not cap.isOpened():
-        blank = _blank_frame("Cannot open camera source.")
+    if not _connect():
         with session.lock:
-            session.latest_jpeg = blank
+            session.latest_jpeg = _blank_frame("Cannot open camera source.")
             session.running = False
             session.error = f"Cannot open source: {session.source_url}"
-        print(f"{tag} Failed to open source after {RECONNECT_ATTEMPTS} attempts.")
+        print(f"{tag} Failed to open source.")
         return
 
     with session.lock:
@@ -211,8 +209,10 @@ def _grabber_loop(session: CameraSession):
         session.error = None
 
     print(f"{tag} Frame grabber started for: {session.source_url}")
-    disconnect_count = 0
-    last_jpeg_time = 0.0  # throttle JPEG encode
+    
+    # FPS Tracker
+    frame_count = 0
+    t0 = time.time()
 
     while True:
         with session.lock:
@@ -221,49 +221,33 @@ def _grabber_loop(session: CameraSession):
 
         ret, frame = cap.read()
         if not ret:
-            disconnect_count += 1
-            blank = _blank_frame("Stream disconnected...")
             with session.lock:
-                session.latest_jpeg = blank
-
-            if disconnect_count >= RECONNECT_ATTEMPTS:
-                print(f"{tag} Stream lost. Attempting reconnect...")
-                cap.release()
-                cap = cv2.VideoCapture(resolved)
-                if cap.isOpened():
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                    disconnect_count = 0
-                    with session.lock:
-                        session._cap = cap
-                        session.error = None
-                    print(f"{tag} Reconnected.")
-                else:
-                    with session.lock:
-                        session.error = "Stream disconnected — reconnect failed."
-                    print(f"{tag} Reconnect failed.")
-                    time.sleep(RECONNECT_DELAY)
-                    disconnect_count = 0
+                session.latest_jpeg = _blank_frame("Stream disconnected... Reconnecting...")
+            print(f"{tag} Stream lost. Attempting reconnect...")
+            cap.release()
+            time.sleep(0.5)
+            if _connect():
+                with session.lock:
+                    session._cap = cap
+                    session.error = None
+                print(f"{tag} Reconnected.")
             else:
-                time.sleep(0.5)
+                with session.lock:
+                    session.error = "Stream disconnected — reconnect failed."
+                print(f"{tag} Reconnect failed.")
+                time.sleep(RECONNECT_DELAY)
             continue
-
-        disconnect_count = 0
-
-        # Atomic swap — inference thread picks this up
+            
         with session._grab_lock:
             session._latest_raw_frame = frame
-
-        # Throttled JPEG encode — only re-encode if enough time has passed
+            
+        frame_count += 1
         now = time.time()
-        if now - last_jpeg_time >= GRAB_JPEG_MIN_INTERVAL:
-            jpeg = _frame_to_jpeg(frame)
-            with session.lock:
-                session.latest_jpeg = jpeg
-            last_jpeg_time = now
+        if now - t0 >= 5.0:
+            session.fps_metrics["grab"] = round(frame_count / (now - t0), 1)
+            frame_count = 0
+            t0 = now
 
-        time.sleep(0.005)
-
-    # ── Cleanup ──────────────────────────────────────────────────────────
     cap.release()
     with session.lock:
         session._cap = None
@@ -291,115 +275,81 @@ def _draw_lightweight_boxes(frame, boxes_np, confs_np):
 
 
 def _inference_loop(session: CameraSession):
-    """Runs YOLO inference on the latest grabbed frame.
-
-    - Reads latest frame via atomic swap (never queues)
-    - Capped at INFER_FPS
-    - Resizes to INFER_RESIZE before YOLO
-    - Lightweight annotation (cv2.rectangle, not r.plot())
-    - Throttled DB writes and snapshot publishing
-    - FPS diagnostics every DIAG_INTERVAL seconds
+    """STAGE 2: Inference Worker
+    Reads _latest_raw_frame as snapshot.
+    Runs YOLO async without blocking the stream or the capture thread.
+    Saves output to _latest_infer_res via _infer_lock.
     """
     tag = f"[Inference {session.id[:8]}]"
-
-    # Load model (independent instance per session)
+    
     model = None
     if YOLO_AVAILABLE:
         try:
             model = YOLO(MODEL_NAME)
-
-            # ── GPU + half-precision acceleration ─────────────────
             import torch
             if torch.cuda.is_available():
                 model.to("cuda")
                 model.half()
-                print(f"{tag} 🚀 CUDA enabled — running on GPU with FP16")
-            else:
-                print(f"{tag} ⚠ No CUDA — running on CPU")
-
-            # ── Model integrity logging ───────────────────────────
-            print(f"{tag} ══════════════════════════════════════════")
-            print(f"{tag} YOLO MODEL DIAGNOSTICS")
-            print(f"{tag}   Weight file : {MODEL_NAME}")
-            print(f"{tag}   Task        : {model.task}")
-            person_cls = [k for k, v in model.names.items() if v == 'person']
-            print(f"{tag}   Person class: {person_cls} (filtering on classes=[0])")
-            print(f"{tag}   Input size  : {IMG_SIZE}")
-            print(f"{tag}   Resize to   : {INFER_RESIZE}")
-            print(f"{tag}   Conf thresh : {CONF_THRESH}")
-            print(f"{tag}   IOU thresh  : {IOU_THRESH}")
-            print(f"{tag}   FPS cap     : {INFER_FPS}")
-            print(f"{tag} ══════════════════════════════════════════")
         except Exception as e:
             print(f"{tag} YOLO load error: {e}")
 
     with session.lock:
         session._model = model
 
-    # Open audio (best-effort, only for webcam)
-    audio_stream = None
-    pa_instance = None
-    if AUDIO_AVAILABLE and str(session.source_url).isdigit():
-        try:
-            pa_instance = pyaudio.PyAudio()
-            audio_stream = pa_instance.open(
-                format=pyaudio.paFloat32, channels=1, rate=AUDIO_RATE,
-                input=True, frames_per_buffer=AUDIO_CHUNK
-            )
-            with session.lock:
-                session._audio_pa = pa_instance
-                session._audio_stream = audio_stream
-        except Exception as e:
-            print(f"{tag} Audio unavailable: {e}")
-
-    print(f"{tag} Inference loop started (cap: {INFER_FPS} FPS, debug: {SENTINEL_DEBUG})")
+    print(f"{tag} Inference worker started (Target: {INFER_FPS} FPS)")
+    
+    tracker = session._tracker
     db = shared_db.get_db()
-    interval = 1.0 / INFER_FPS
-
-    # ── Throttle / diagnostics state ──────────────────────────────
+    
     last_db_write = 0.0
-    last_diag_time = time.time()
-    diag_frame_count = 0
-    diag_infer_total = 0.0
+    def _db_logger():
+        nonlocal last_db_write
+        while getattr(session, "running", False):
+            now = time.time()
+            if now - last_db_write >= DB_LOG_INTERVAL:
+                with session.lock:
+                    p = session.metrics.get("people", 0)
+                    r = session.metrics.get("risk", "LOW")
+                try:
+                    db.log_event(p, "NORMAL", r) # "NORMAL" for audio status as it's removed
+                except Exception:
+                    pass
+                last_db_write = now
+            time.sleep(0.5)
+            
+    threading.Thread(target=_db_logger, daemon=True).start()
+
+    frame_count = 0
+    t0 = time.time()
+    
+    # Store reference to prevent running inference on exact same frame twice
+    last_processed_frame = None
 
     while True:
-        t0 = time.time()
-
         with session.lock:
             if not session.running:
                 break
-
-        # Grab the latest frame (atomic, skip old frames)
+                
+        # 1. Grab snapshot of latest frame
         with session._grab_lock:
             frame = session._latest_raw_frame
-
-        if frame is None:
-            time.sleep(0.05)  # no frame yet, wait
+            
+        if frame is None or frame is last_processed_frame:
+            time.sleep(0.01)
             continue
-
+            
+        last_processed_frame = frame
         orig_h, orig_w = frame.shape[:2]
 
-        # ── Frame resize for inference ────────────────────────────
-        # Resize to INFER_RESIZE to reduce compute. Keep orig dims
-        # for coordinate mapping.
         target_w, target_h = INFER_RESIZE
         if orig_w > target_w or orig_h > target_h:
-            infer_frame = cv2.resize(frame, (target_w, target_h),
-                                     interpolation=cv2.INTER_LINEAR)
+            infer_frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
         else:
             infer_frame = frame
         h, w = infer_frame.shape[:2]
 
-        if SENTINEL_DEBUG:
-            print(f"{tag} Frame: {orig_w}×{orig_h} → {w}×{h}")
-
-        # ── YOLO inference + tracking ─────────────────────────────
-        annotated = infer_frame  # no copy — we draw directly
-        tracker = session._tracker
         boxes_np = np.empty((0, 4))
         confs_np = np.array([])
-
-        t_infer_start = time.time()
 
         if model is not None:
             try:
@@ -410,7 +360,6 @@ def _inference_loop(session: CameraSession):
                         boxes_np = r.boxes.xyxy.cpu().numpy()
                         confs_np = r.boxes.conf.cpu().numpy()
 
-                        # Scale boxes back to original frame coordinates
                         if orig_w != w or orig_h != h:
                             scale_x = orig_w / w
                             scale_y = orig_h / h
@@ -418,78 +367,55 @@ def _inference_loop(session: CameraSession):
                             boxes_np[:, [0, 2]] *= scale_x
                             boxes_np[:, [1, 3]] *= scale_y
 
-                        if SENTINEL_DEBUG:
-                            print(f"{tag}   Raw detections: {len(boxes_np)}")
-
                         tracker.update(boxes_np, confs_np)
                     else:
                         tracker.update(np.empty((0, 4)))
-                        if SENTINEL_DEBUG:
-                            print(f"{tag}   Raw detections: 0")
-            except Exception as e:
-                print(f"{tag} Inference error: {e}")
+            except Exception:
                 tracker.update(np.empty((0, 4)))
         else:
             tracker.update(np.empty((0, 4)))
 
-        t_infer_end = time.time()
-        infer_ms = (t_infer_end - t_infer_start) * 1000
+        # Run MediaPipe face mesh detection on infer_frame
+        face_lms_smoothed = []
+        if FACE_AVAILABLE:
+            try:
+                rgb_frame = cv2.cvtColor(infer_frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+                res = face_mesh.detect(mp_image)
+                
+                face_landmarks_list = []
+                if res.face_landmarks:
+                    for face_lm in res.face_landmarks:
+                        lms = []
+                        for lm in face_lm:
+                            lms.append([lm.x * orig_w, lm.y * orig_h])
+                        face_landmarks_list.append(np.array(lms, dtype=np.float64))
+                        
+                session._face_tracker.update(face_landmarks_list)
+            except Exception as e:
+                session._face_tracker.update([])
+        else:
+            session._face_tracker.update([])
+            
+        face_lms_smoothed = session._face_tracker.get_smoothed_landmarks()
 
-        # ── Lightweight annotation (replaces r.plot()) ────────────
-        # Draw on original-res frame for MJPEG output
-        annotated = frame.copy() if len(boxes_np) > 0 else frame
-        if len(boxes_np) > 0:
-            annotated = _draw_lightweight_boxes(annotated, boxes_np, confs_np)
-
-        # ── Tracked metrics ───────────────────────────────────────
+        # 2. Process results
         p_count = tracker.active_count
         raw_centers = extract_bbox_centers(boxes_np)
-
-        if SENTINEL_DEBUG:
-            print(f"{tag}   Tracked: active={tracker.active_count} total={tracker.total_count}")
-
-        # ── Public face-blurred frame ─────────────────────────────
-        blurred_frame = annotated.copy()
-        if face_cascade is not None and len(boxes_np) > 0:
-            try:
-                gray = cv2.cvtColor(blurred_frame, cv2.COLOR_BGR2GRAY)
-                # Quick face detection on the current frame
-                faces = face_cascade.detectMultiScale(gray, 1.2, 5)
-                for (x, y, w_face, h_face) in faces:
-                    # Extract ROI, blur it heavily, put it back
-                    face_roi = blurred_frame[y:y+h_face, x:x+w_face]
-                    face_roi = cv2.GaussianBlur(face_roi, (51, 51), 30)
-                    blurred_frame[y:y+h_face, x:x+w_face] = face_roi
-            except Exception as e:
-                # If blurring fails for any reason, don't crash loop
-                print(f"{tag} Face blur error: {e}")
-
-        # ── Spatial projection pipeline ───────────────────────────
-        spatial = session._spatial
-        spatial.offer_frame(frame)
-        spatial.update(raw_centers)
-
-        # ── Audio analysis ────────────────────────────────────────
-        aud_status = _analyze_audio(audio_stream)
-
-        # ── Risk fusion ───────────────────────────────────────────
-        risk, safety = _get_risk(aud_status, p_count)
-
-        # ── Store annotated frame + metrics ───────────────────────
-        annotated_jpeg = _frame_to_jpeg(annotated)
-        blurred_jpeg = _frame_to_jpeg(blurred_frame)
+        risk, safety = _get_risk(p_count)
+        
+        # 3. Save inference state to shared lock
+        with session._infer_lock:
+            session._latest_infer_res = (boxes_np, confs_np, face_lms_smoothed, raw_centers, p_count)
+            
+        # 4. Save metrics state
         now = time.time()
         with session.lock:
-            session.latest_annotated_jpeg = annotated_jpeg
-            session.latest_blurred_jpeg = blurred_jpeg
             session.metrics = {
                 "people": p_count,
                 "risk": risk,
                 "safety": safety,
-                "audio": aud_status,
             }
-
-            # ── AI: record density history + compute velocity ─────
             session.density_history.append((now, p_count))
             if len(session.density_history) >= 2:
                 ts_prev, d_prev = session.density_history[-2]
@@ -497,57 +423,156 @@ def _inference_loop(session: CameraSession):
                 if dt > 0.01:
                     v_new = (p_count - d_prev) / dt
                     alpha = 0.4
-                    session.velocity_smooth = (
-                        alpha * v_new + (1.0 - alpha) * session.velocity_smooth
-                    )
+                    session.velocity_smooth = alpha * v_new + (1.0 - alpha) * session.velocity_smooth
+                    
+        frame_count += 1
+        if now - t0 >= 5.0:
+            session.fps_metrics["infer"] = round(frame_count / (now - t0), 1)
+            frame_count = 0
+            t0 = now
+            import psutil
+            cpu = psutil.cpu_percent()
+            print(f"📊 [Monitor {session.id[:4]}] FPS -> Cap: {session.fps_metrics['grab']} | Inf: {session.fps_metrics['infer']} | Stream: {session.fps_metrics['stream']} | CPU: {cpu}%")
+            
+        # Cap inference to INFER_FPS (leave CPU room for Streamer)
+        time.sleep(1.0 / INFER_FPS)
 
-        # ── Throttled MongoDB write (every DB_LOG_INTERVAL sec) ───
-        if now - last_db_write >= DB_LOG_INTERVAL:
-            try:
-                db.log_event(p_count, aud_status, risk)
-            except Exception:
-                pass
-            last_db_write = now
+    print(f"{tag} Inference worker stopped.")
 
-        # ── FPS Diagnostics (every DIAG_INTERVAL sec) ─────────────
-        diag_frame_count += 1
-        diag_infer_total += infer_ms
-        elapsed = time.time() - t0
-        if now - last_diag_time >= DIAG_INTERVAL:
-            avg_infer = diag_infer_total / max(diag_frame_count, 1)
-            fps = diag_frame_count / max(now - last_diag_time, 0.001)
-            pipeline_ms = elapsed * 1000
-            print(f"{tag} 📊 Inference: {avg_infer:.1f}ms | "
-                  f"Pipeline: {pipeline_ms:.1f}ms | "
-                  f"FPS: {fps:.1f} | "
-                  f"People: {p_count}")
-            diag_frame_count = 0
-            diag_infer_total = 0.0
-            last_diag_time = now
 
-        # ── FPS cap ───────────────────────────────────────────────
-        sleep_time = interval - elapsed
-        if sleep_time > 0:
-            time.sleep(sleep_time)
+def _stream_loop(session: CameraSession):
+    """STAGE 3: Stream Output Worker
+    Reads _latest_raw_frame + _latest_infer_res.
+    Always generates output at 30fps. Never blocks on YOLO.
+    Triggers stream_event for FastAPI MJPEG yield.
+    """
+    tag = f"[Streamer {session.id[:8]}]"
+    print(f"{tag} Stream output worker started")
+    
+    frame_count = 0
+    t0 = time.time()
 
-    # ── Cleanup ──────────────────────────────────────────────────────────
-    if audio_stream:
-        try:
-            audio_stream.stop_stream()
-            audio_stream.close()
-        except Exception:
-            pass
-    if pa_instance:
-        try:
-            pa_instance.terminate()
-        except Exception:
-            pass
-    with session.lock:
-        session._audio_stream = None
-        session._audio_pa = None
-        session._model = None
+    while True:
+        with session.lock:
+            if not session.running:
+                break
+                
+        # 1. Grab snapshot of latest frame
+        with session._grab_lock:
+            frame = session._latest_raw_frame
+            
+        if frame is None:
+            time.sleep(0.01)
+            continue
+            
+        # 2. Grab latest inference results
+        with session._infer_lock:
+            boxes_np, confs_np, face_lms_smoothed, raw_centers, p_count = session._latest_infer_res
+            
+        # 3. Form annotated frame
+        annotated = frame.copy() if len(boxes_np) > 0 else frame
+        if len(boxes_np) > 0:
+            annotated = _draw_lightweight_boxes(annotated, boxes_np, confs_np)
+            
+        # 4. Form blurred frame conditionally
+        blurred_frame = annotated.copy()
+        orig_h, orig_w = blurred_frame.shape[:2]
+        
+        # Build a single binary mask for all areas to anonymize
+        anon_mask = np.zeros((orig_h, orig_w), dtype=np.uint8)
+        covered_face_areas = []
+        
+        # Generate Convex Hull mask for each face and add it to anon_mask
+        has_small_face = False
+        for lms in face_lms_smoothed:
+            if len(lms) == 0:
+                continue
+            pts = np.array(lms, dtype=np.int32)
+            hull = cv2.convexHull(pts)
+            cv2.fillConvexPoly(anon_mask, hull, 255)
+            
+            x, y, w, h = cv2.boundingRect(pts)
+            covered_face_areas.append((max(0, x), max(0, y), min(orig_w, x + w), min(orig_h, y + h)))
+            
+            # Check for small face to apply heavier dilation
+            face_area = w * h
+            if face_area < (orig_w * orig_h * 0.015):
+                has_small_face = True
+                
+        # Morphological Expansion (Dilation) to cover edges cleanly
+        if len(face_lms_smoothed) > 0:
+            k_size = 35 if has_small_face else 20
+            kernel = np.ones((k_size, k_size), np.uint8)
+            anon_mask = cv2.dilate(anon_mask, kernel, iterations=1)
+                
+        # Check YOLO boxes for fallbacks (Top 45% of person if no face mesh overlaps)
+        for pb in boxes_np:
+            px1, py1, px2, py2 = map(int, pb)
+            px1, py1 = max(0, px1), max(0, py1)
+            px2, py2 = min(orig_w, px2), min(orig_h, py2)
+            
+            p_width = px2 - px1
+            p_height = py2 - py1
+            if p_width <= 0 or p_height <= 0:
+                continue
+                
+            hx1 = px1
+            hy1 = py1
+            hx2 = px2
+            hy2 = py1 + int(p_height * 0.45)
+            
+            is_covered = False
+            for (fx1, fy1, fx2, fy2) in covered_face_areas:
+                ix1 = max(hx1, fx1)
+                iy1 = max(hy1, fy1)
+                ix2 = min(hx2, fx2)
+                iy2 = min(hy2, fy2)
+                if ix2 > ix1 and iy2 > iy1:
+                    is_covered = True
+                    break
+                    
+            if not is_covered:
+                cv2.rectangle(anon_mask, (hx1, hy1), (hx2, hy2), 255, -1)
+                
+        # Apply heavy pixelation where anon_mask > 0
+        if cv2.countNonZero(anon_mask) > 0:
+            scale_factor = max(1, orig_w // 12)  # target roughly 12px blocks
+            small_w, small_h = orig_w // scale_factor, orig_h // scale_factor
+            if small_w > 0 and small_h > 0:
+                small = cv2.resize(blurred_frame, (small_w, small_h), interpolation=cv2.INTER_LINEAR)
+                pixelated = cv2.resize(small, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
+                
+                mask_bool = anon_mask > 0
+                blurred_frame[mask_bool] = pixelated[mask_bool]
+        # 5. Output spatial data
+        spatial = session._spatial
+        spatial.offer_frame(frame)
+        spatial.update(raw_centers)
 
-    print(f"{tag} Inference loop stopped.")
+        # 6. Encode JPEGs
+        jpeg_raw = _frame_to_jpeg(frame)
+        jpeg_ann = _frame_to_jpeg(annotated)
+        jpeg_blur = _frame_to_jpeg(blurred_frame)
+        
+        with session.lock:
+            session.latest_jpeg = jpeg_raw
+            session.latest_annotated_jpeg = jpeg_ann
+            session.latest_blurred_jpeg = jpeg_blur
+            
+        with session.stream_event:
+            session.stream_event.notify_all()
+            
+        frame_count += 1
+        now = time.time()
+        if now - t0 >= 5.0:
+            session.fps_metrics["stream"] = round(frame_count / (now - t0), 1)
+            frame_count = 0
+            t0 = now
+            
+        # Loop at ~30 FPS constant
+        time.sleep(0.033)
+
+    print(f"{tag} Stream worker stopped.")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -565,6 +590,26 @@ class MultiCameraManager:
             "Room 2": []
         }
         self._lock = threading.Lock()
+
+    def get_multimodal_snapshot(self) -> dict:
+        """Return fused data from all three multi-modal layers."""
+        sms = sms_gateway.get_sms_stats()
+
+        # Aggregate total vision count
+        total_vision = 0
+        with self._lock:
+            sessions = list(self._sessions.values())
+        for s in sessions:
+            with s.lock:
+                total_vision += s.metrics.get("people", 0)
+
+        return {
+            "signal": sig,
+            "acoustic": aco,
+            "sms": sms,
+            "vision_count": total_vision,
+            "ts": time.time(),
+        }
 
     def add_camera(self, source_url: str, label: str = "", room: str = "Room 1") -> tuple[str, str]:
         """Register a new camera. Returns (camera_id, error_msg)."""
@@ -589,7 +634,7 @@ class MultiCameraManager:
         self.stop_camera(camera_id)
 
         # Wait for both threads to finish
-        for t in (session._grabber_thread, session._inference_thread):
+        for t in (session._grabber_thread, session._inference_thread, session._stream_thread):
             if t and t.is_alive():
                 t.join(timeout=3.0)
 
@@ -619,6 +664,8 @@ class MultiCameraManager:
             session.latest_jpeg = _blank_frame("Starting up...")
             session._spatial = SpatialEngine()
             session._tracker.reset()
+            if hasattr(session, '_face_tracker'):
+                session._face_tracker.reset()
 
         # Launch grabber thread (fast frame reader)
         gt = threading.Thread(
@@ -638,9 +685,19 @@ class MultiCameraManager:
         )
         it.start()
 
+        # Launch streamer thread (output at 30 FPS)
+        st = threading.Thread(
+            target=_stream_loop,
+            args=(session,),
+            daemon=True,
+            name=f"sentinel-stream-{camera_id}"
+        )
+        st.start()
+
         with session.lock:
             session._grabber_thread = gt
             session._inference_thread = it
+            session._stream_thread = st
 
         return True, ""
 
@@ -927,10 +984,10 @@ def get_metrics() -> dict:
     with _default_lock:
         cid = _default_camera_id
     if cid is None:
-        return {"people": 0, "risk": "LOW", "safety": "SAFE", "audio": "NORMAL"}
+        return {"people": 0, "risk": "LOW", "safety": "SAFE"}
     session = _manager.get_session(cid)
     if session is None:
-        return {"people": 0, "risk": "LOW", "safety": "SAFE", "audio": "NORMAL"}
+        return {"people": 0, "risk": "LOW", "safety": "SAFE"}
     with session.lock:
         return dict(session.metrics)
 

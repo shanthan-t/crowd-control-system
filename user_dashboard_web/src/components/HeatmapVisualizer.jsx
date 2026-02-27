@@ -16,9 +16,13 @@ const HeatmapVisualizer = ({ cameraId, roomName }) => {
         sseUrl = `/api/cameras/spatial/${cameraId}`;
     }
 
+    // Always attach the dominant camera's blueprint if available
+    const blueprintUrl = cameraId ? `/api/cameras/spatial/blueprint/${cameraId}` : null;
+
     return (
         <HeatmapCanvas
             sseUrl={sseUrl}
+            blueprintUrl={blueprintUrl}
             showDots={true}
             showStatus={true}
         />
