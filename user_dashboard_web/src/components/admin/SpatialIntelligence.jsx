@@ -14,9 +14,21 @@
 
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import {
-    Activity, Radar, Camera, SlidersHorizontal,
-    Layers, Crosshair, MapPin, Upload, Maximize
+    Activity, Radar, Camera, ShieldAlert,
+    Layers, Maximize, MapPin, Upload
 } from 'lucide-react';
+import CrowdSafetyIndex from '../CrowdSafetyIndex';
+
+const PERFORMANCE_CONFIG = {
+    gridRows: 30,
+    gridCols: 20,
+    intensityMultiplier: 1.3,
+    gaussianBlurRadius: 7,
+    heatmapDecay: 0.92,
+    inferenceResolution: 640,
+    maxFPS: 20,
+    frameSkip: 1
+};
 
 const TURBO_LUT = buildTurboLUT();
 
@@ -326,16 +338,12 @@ const SpatialIntelligence = () => {
     const [selectedCamera, setSelectedCamera] = useState('');
     const [viewMode, setViewMode] = useState('Room 1'); // 'Room 1' or 'Camera'
 
-    const [gridResolution, setGridResolution] = useState(40);
-    const [intensity, setIntensity] = useState(1.4);
-    const [showPoints, setShowPoints] = useState(true);
     const [peopleCount, setPeopleCount] = useState(0);
 
     // States driving the UI workflow
     const [blueprintExists, setBlueprintExists] = useState(true); // Assume true, verify on fetch
     const [blueprintUrl, setBlueprintUrl] = useState('');
     const [isReady, setIsReady] = useState(true);
-    const [forceCalibration, setForceCalibration] = useState(false);
 
     // Try finding an active camera on mount if none selected
     useEffect(() => {
@@ -474,9 +482,8 @@ const SpatialIntelligence = () => {
 
         if (!grid || grid.length === 0 || gridW === 0 || gridH === 0) return;
 
-        const targetW = Math.max(10, Math.round(gridResolution));
-        const aspect = gridH / Math.max(gridW, 1);
-        const targetH = Math.max(6, Math.round(targetW * aspect));
+        const targetW = PERFORMANCE_CONFIG.gridCols;
+        const targetH = PERFORMANCE_CONFIG.gridRows;
         const resampled = resampleGrid(grid, gridW, gridH, targetW, targetH);
 
         if (!offscreenRef.current) {
@@ -490,7 +497,7 @@ const SpatialIntelligence = () => {
         const pixels = imageData.data;
 
         for (let i = 0; i < resampled.length; i++) {
-            let v = resampled[i] * intensity;
+            let v = resampled[i] * PERFORMANCE_CONFIG.intensityMultiplier;
             if (v < 0.003) {
                 pixels[i * 4 + 3] = 0;
                 continue;
@@ -510,48 +517,16 @@ const SpatialIntelligence = () => {
         // Map heatmap over the exact same canvas bounds 
         // using soft gaussian filtering purely on this separate layer
         ctx.save();
-        ctx.filter = 'blur(16px)';
+        ctx.filter = `blur(${PERFORMANCE_CONFIG.gaussianBlurRadius}px)`;
         ctx.globalAlpha = 0.8;
         ctx.drawImage(off, 0, 0, cw, ch);
         ctx.restore();
-    }, [gridResolution, intensity]);
+    }, []);
 
     const renderPoints = useCallback((data) => {
-        if (!data || !pointsCanvasRef.current) return;
-        const { points, topW, topH } = data;
-        const canvas = pointsCanvasRef.current;
-        const ctx = canvas.getContext('2d');
-        const cw = canvas.width;
-        const ch = canvas.height;
-
-        ctx.clearRect(0, 0, cw, ch);
-
-        if (!showPoints || !points || points.length === 0) return;
-
-        const sx = cw / Math.max(topW, 1);
-        const sy = ch / Math.max(topH, 1);
-
-        ctx.fillStyle = '#ffffff';
-        ctx.shadowColor = '#000000';
-        ctx.shadowBlur = 4;
-
-        for (let i = 0; i < points.length; i++) {
-            const pt = points[i];
-            const x = pt[0] * sx;
-            const y = pt[1] * sy;
-
-            ctx.beginPath();
-            ctx.arc(x, y, 6, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.beginPath();
-            ctx.fillStyle = '#eab308'; // Amber inner dot
-            ctx.arc(x, y, 3, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#ffffff';
-        }
-        ctx.shadowBlur = 0;
-    }, [showPoints]);
+        // Points rendering completely disabled for clean demo build
+        return;
+    }, []);
 
     // ── Animation Loop ──────────────────────────────────────────
     useEffect(() => {
@@ -573,13 +548,13 @@ const SpatialIntelligence = () => {
     // ── Redraw on control changes ───────────────────────────────
     useEffect(() => {
         needsRedrawRef.current = true;
-    }, [gridResolution, intensity, showPoints]);
+    }, []);
 
 
     // Determine UI State
-    const showUploader = connected && !blueprintExists;
-    const showCalibration = connected && blueprintExists && (!isReady || forceCalibration);
-    const showVisualizer = connected && blueprintExists && isReady && !forceCalibration;
+    const showUploader = viewMode === 'Camera' && connected && !blueprintExists;
+    const showCalibration = viewMode === 'Camera' && connected && blueprintExists && !isReady;
+    const showVisualizer = connected && (viewMode === 'Room 1' || (blueprintExists && isReady));
 
     // Strict css rules for stacked canvases ensuring perfect aspect scaling through CSS 
     // without altering their exact internal pixel counts.
@@ -602,7 +577,6 @@ const SpatialIntelligence = () => {
                     cameraId={selectedCamera}
                     blueprintUrl={blueprintUrl}
                     onComplete={() => {
-                        setForceCalibration(false);
                         setIsReady(true);
                         checkBlueprint(); // Remount dimensions if needed
                     }}
@@ -686,111 +660,15 @@ const SpatialIntelligence = () => {
                 <div className="sd-panel-divider" />
 
                 <div className="sd-panel-section">
-                    <div className="sd-panel-label">
-                        <SlidersHorizontal size={12} />
-                        Grid Resolution
+                    <div className="sd-panel-label" style={{ marginBottom: "0.5rem" }}>
+                        <ShieldAlert size={12} />
+                        Crowd Safety Index
                     </div>
-                    <input
-                        className="sd-slider"
-                        type="range"
-                        min="20"
-                        max="80"
-                        step="2"
-                        value={gridResolution}
-                        onChange={(e) => setGridResolution(Number(e.target.value))}
-                        disabled={!showVisualizer}
-                    />
-                    <div className="sd-panel-value">
-                        <span>{gridResolution}</span>
-                        <span className="sd-panel-unit">cells</span>
-                    </div>
-                </div>
-
-                <div className="sd-panel-divider" />
-
-                <div className="sd-panel-section">
-                    <div className="sd-panel-label">
-                        <SlidersHorizontal size={12} />
-                        Intensity Multiplier
-                    </div>
-                    <input
-                        className="sd-slider"
-                        type="range"
-                        min="0.6"
-                        max="3.0"
-                        step="0.1"
-                        value={intensity}
-                        onChange={(e) => setIntensity(Number(e.target.value))}
-                        disabled={!showVisualizer}
-                    />
-                    <div className="sd-panel-value">
-                        <span>{intensity.toFixed(1)}</span>
-                        <span className="sd-panel-unit">x</span>
-                    </div>
-                </div>
-
-                <div className="sd-panel-divider" />
-
-                <div className="sd-panel-section">
-                    <div className="sd-panel-label">
-                        <Maximize size={12} />
-                        Calibration
-                    </div>
-                    <button
-                        onClick={() => setForceCalibration(true)}
-                        disabled={!connected || !selectedCamera || !blueprintExists}
-                        style={{
-                            width: '100%', padding: '8px',
-                            background: (connected && blueprintExists) ? '#3b82f6' : '#1e293b',
-                            color: '#fff', border: 'none',
-                            borderRadius: '4px', cursor: (connected && blueprintExists) ? 'pointer' : 'not-allowed',
-                            fontSize: '12px', marginTop: '4px', fontWeight: 'bold'
-                        }}
-                    >
-                        Recalibrate Layout
-                    </button>
-
-                    {blueprintExists && (
-                        <button
-                            onClick={() => {
-                                if (window.confirm("Delete this blueprint? You will need to upload a new one.")) {
-                                    setBlueprintExists(false);
-                                    setBlueprintUrl('');
-                                    bgImgRef.current = null;
-                                }
-                            }}
-                            style={{
-                                width: '100%', padding: '8px',
-                                background: 'transparent',
-                                color: '#ef4444', border: '1px solid #7f1d1d',
-                                borderRadius: '4px', cursor: 'pointer',
-                                fontSize: '12px', marginTop: '8px'
-                            }}
-                        >
-                            Remove Selected Blueprint
-                        </button>
-                    )}
-                </div>
-
-                <div className="sd-panel-divider" />
-
-                <div className="sd-panel-section">
-                    <div className="sd-panel-label">
-                        <Crosshair size={12} />
-                        Projected Points
-                    </div>
-                    <label className="sd-toggle">
-                        <input
-                            type="checkbox"
-                            checked={showPoints}
-                            onChange={(e) => setShowPoints(e.target.checked)}
-                            disabled={!showVisualizer}
-                        />
-                        <span className="sd-toggle-slider" />
-                        <span className="sd-toggle-label">
-                            {showPoints ? 'Visible' : 'Hidden'}
-                        </span>
-                    </label>
+                    <CrowdSafetyIndex csi={{
+                        crowd_safety_index: Math.min(100, Math.round((peopleCount / 200) * 100)),
+                        current_count: peopleCount,
+                        capacity_limit: 200
+                    }} />
                 </div>
 
                 <div className="sd-panel-divider" />
@@ -807,7 +685,6 @@ const SpatialIntelligence = () => {
                                 value={viewMode === 'Room 1' ? 'Room 1' : 'Camera'}
                                 onChange={(e) => {
                                     setViewMode(e.target.value);
-                                    setForceCalibration(false);
                                 }}
                                 style={{ marginBottom: '8px' }}
                             >
@@ -821,7 +698,6 @@ const SpatialIntelligence = () => {
                                     value={selectedCamera}
                                     onChange={(e) => {
                                         setSelectedCamera(e.target.value);
-                                        setForceCalibration(false);
                                     }}
                                 >
                                     {cameras.map((c) => (

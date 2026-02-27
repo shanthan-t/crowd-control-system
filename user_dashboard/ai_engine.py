@@ -391,6 +391,20 @@ def get_recommendations(manager) -> dict:
         "crowd_safety_index": csi_value
     }
 
+    # ── Dispatch trigger check ─────────────────────────────────────────
+    dispatch_alert = None
+    try:
+        from user_dashboard import dispatch
+        if dispatch.check_dispatch_required(csi_value, total_people, capacity_limit):
+            pending = dispatch.create_dispatch("Room 1", csi_value, total_people)
+            if pending and pending["status"] in ("pending", "active", "assigned"):
+                dispatch_alert = pending
+        else:
+            # Clear completed dispatches when conditions normalize
+            dispatch.reset_completed_dispatch()
+    except Exception:
+        pass  # dispatch module import failure should never break recommendations
+
     return {
         "risk_score": round(global_risk, 3),
         "risk_level": global_alert,
@@ -403,5 +417,7 @@ def get_recommendations(manager) -> dict:
         "staff_required_total": total_staff_req,
         "recommendations": recs,
         "zone_assessments": [z.to_dict() for z in assessments],
+        "dispatch_alert": dispatch_alert,
         "timestamp": now,
     }
+

@@ -368,7 +368,81 @@ def ai_recommendations():
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  Legacy Live Monitor Endpoints (backward compatible)
+#  Automated Staff Dispatch
+# ══════════════════════════════════════════════════════════════════════════
+
+from user_dashboard import dispatch
+
+class DispatchConfirmRequest(BaseModel):
+    dispatch_id: str
+
+class DispatchAcceptRequest(BaseModel):
+    dispatch_id: str
+    staff_id: str
+
+@app.get("/api/dispatch/status")
+def dispatch_status():
+    """Return current dispatch state + staff list."""
+    current = dispatch.get_dispatch_status()
+    staff = dispatch.get_staff_list()
+    return {
+        "dispatch": current,
+        "staff": staff,
+    }
+
+@app.post("/api/dispatch/confirm")
+def dispatch_confirm(req: DispatchConfirmRequest):
+    """Admin confirms a pending dispatch → moves to ACTIVE."""
+    ok, err = dispatch.confirm_dispatch(req.dispatch_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail=err)
+    return {"success": True, "message": "Dispatch confirmed. Staff alerted."}
+
+@app.post("/api/dispatch/accept")
+def dispatch_accept(req: DispatchAcceptRequest):
+    """Staff accepts a dispatch assignment. First-accept-wins."""
+    ok, err = dispatch.accept_dispatch(req.dispatch_id, req.staff_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail=err)
+    return {"success": True, "message": "Assignment confirmed."}
+
+@app.post("/api/dispatch/cancel")
+def dispatch_cancel(req: DispatchConfirmRequest):
+    """Admin cancels a pending/active dispatch."""
+    ok, err = dispatch.cancel_dispatch(req.dispatch_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail=err)
+    return {"success": True, "message": "Dispatch cancelled."}
+
+@app.get("/api/dispatch/staff-stream")
+def dispatch_staff_stream():
+    """SSE stream for staff — pushes active dispatch alerts."""
+    def _generate():
+        last_status = None
+        while True:
+            current = dispatch.get_dispatch_status()
+            # Only push when there's a meaningful state change
+            status_key = None
+            if current:
+                status_key = f"{current['dispatch_id']}:{current['status']}"
+
+            if status_key != last_status:
+                payload = json.dumps(current) if current else json.dumps({"dispatch": None})
+                yield f"data: {payload}\n\n"
+                last_status = status_key
+
+            time.sleep(1.0)  # 1 Hz — lightweight
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 # ══════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/monitor/start")

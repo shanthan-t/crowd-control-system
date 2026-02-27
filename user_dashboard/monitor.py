@@ -39,17 +39,17 @@ from shared import db as shared_db
 # ── Configuration ──────────────────────────────────────────────────────────
 AUDIO_RATE    = 22050
 AUDIO_CHUNK   = 1024
-CONF_THRESH   = 0.25
+CONF_THRESH   = 0.4
 IMG_SIZE      = 640
-IOU_THRESH    = 0.45
+IOU_THRESH    = 0.5
 CROWD_SAFE    = 5
 CROWD_DANGER  = 10
 MAX_SESSIONS  = 8
 RECONNECT_ATTEMPTS = 3
 RECONNECT_DELAY    = 2.0
-INFER_FPS     = 24          # raised from 12 — let GPU/fast CPU breathe
+INFER_FPS     = 20          # Hardcoded max FPS for smooth performance
 JPEG_QUALITY  = 70          # lower = faster encode, smaller frames
-INFER_RESIZE  = (960, 540)  # resize before inference (save compute)
+INFER_RESIZE  = (640, 360)  # Locked aggressive resize for ultra-low latency inference
 DB_LOG_INTERVAL = 2.0       # throttle MongoDB writes to once per N seconds
 DIAG_INTERVAL   = 2.0       # print FPS diagnostics every N seconds
 GRAB_JPEG_MIN_INTERVAL = 0.040  # throttle grabber JPEG encode (~25 FPS)

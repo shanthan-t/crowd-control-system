@@ -7,6 +7,7 @@ import RadarSweep from './RadarSweep';
 import HeatmapVisualizer from './HeatmapVisualizer';
 import LiveCameraFeed from './public/LiveCameraFeed';
 import CrowdSafetyIndex from './CrowdSafetyIndex';
+import StaffAlertBanner from './StaffAlertBanner';
 
 const POLLING_INTERVAL = 2000;
 
@@ -185,6 +186,9 @@ const Dashboard = ({ username, onLogout }) => {
 
             {/* ── MAIN BODY ────────────────────────────────────────────────── */}
             <main className="db-body">
+
+                {/* Staff Dispatch Alert */}
+                <StaffAlertBanner />
 
                 {/* Error bar */}
                 {error && (

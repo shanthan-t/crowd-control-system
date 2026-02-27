@@ -4370,12 +4370,12 @@ h6 {
   transition: transform 200ms ease;
 }
 
-.sd-toggle input:checked + .sd-toggle-slider {
+.sd-toggle input:checked+.sd-toggle-slider {
   background: rgba(56, 189, 248, 0.35);
   border-color: rgba(56, 189, 248, 0.6);
 }
 
-.sd-toggle input:checked + .sd-toggle-slider::after {
+.sd-toggle input:checked+.sd-toggle-slider::after {
   transform: translateX(14px);
 }
 
@@ -4393,4 +4393,546 @@ h6 {
   .sd-canvas-wrap {
     min-height: 360px;
   }
+}
+
+/* ================================
+   Automated Staff Dispatch — Modal & Banners
+   ================================ */
+
+/* ── Dispatch Overlay ─────────────────────────── */
+.ai-dispatch-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* ── Dispatch Modal ───────────────────────────── */
+.ai-dispatch-modal {
+  width: 520px;
+  max-width: 92vw;
+  border-radius: 20px;
+  background: rgba(14, 18, 30, 0.92);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 0 40px rgba(239, 68, 68, 0.08);
+  overflow: hidden;
+}
+
+.ai-dispatch-modal-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 24px 24px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.ai-dispatch-modal-header>svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.ai-dispatch-modal-header>div {
+  flex: 1;
+}
+
+.ai-dispatch-modal-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.95);
+  margin: 0 0 4px;
+  letter-spacing: -0.01em;
+}
+
+.ai-dispatch-modal-sub {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.5);
+  margin: 0;
+}
+
+.ai-dispatch-modal-sub strong {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.ai-dispatch-close {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  color: rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  padding: 6px;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.ai-dispatch-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* ── Recommendation Badge ─────────────────────── */
+.ai-dispatch-rec {
+  padding: 12px 24px;
+  background: rgba(239, 68, 68, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.ai-dispatch-rec strong {
+  color: #ef4444;
+  font-weight: 700;
+}
+
+/* ── Staff List ───────────────────────────────── */
+.ai-dispatch-staff-list {
+  padding: 12px 24px 16px;
+}
+
+.ai-dispatch-staff-header {
+  display: grid;
+  grid-template-columns: 1fr 100px 70px;
+  gap: 8px;
+  padding: 0 0 8px;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.3);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.ai-dispatch-staff-row {
+  display: grid;
+  grid-template-columns: 1fr 100px 70px;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  transition: background 0.15s ease;
+}
+
+.ai-dispatch-staff-row--nearest {
+  background: rgba(34, 197, 94, 0.06);
+  border-radius: 8px;
+  padding: 10px 8px;
+  margin: 0 -8px;
+  border-color: rgba(34, 197, 94, 0.1);
+}
+
+.ai-dispatch-staff-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.ai-dispatch-nearest-badge {
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.12);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.ai-dispatch-staff-zone {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.ai-dispatch-staff-dist {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* ── Action Buttons ───────────────────────────── */
+.ai-dispatch-actions {
+  display: flex;
+  gap: 10px;
+  padding: 16px 24px 24px;
+}
+
+.ai-dispatch-btn {
+  flex: 1;
+  padding: 12px 20px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s ease;
+  letter-spacing: 0.01em;
+}
+
+.ai-dispatch-btn--confirm {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: white;
+  box-shadow: 0 4px 16px rgba(239, 68, 68, 0.3);
+}
+
+.ai-dispatch-btn--confirm:hover:not(:disabled) {
+  box-shadow: 0 6px 24px rgba(239, 68, 68, 0.45);
+  transform: translateY(-1px);
+}
+
+.ai-dispatch-btn--confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ai-dispatch-btn--cancel {
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ai-dispatch-btn--cancel:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* ── Status Banners ───────────────────────────── */
+.ai-dispatch-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-radius: 12px;
+  margin-top: 16px;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.ai-dispatch-banner strong {
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.ai-dispatch-banner--active {
+  background: rgba(234, 179, 8, 0.08);
+  border: 1px solid rgba(234, 179, 8, 0.15);
+  color: #eab308;
+}
+
+.ai-dispatch-banner--assigned {
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+/* ================================
+   Staff Alert Overlay (Public Dashboard)
+   ================================ */
+
+.staff-alert-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.staff-alert-modal {
+  width: 400px;
+  max-width: 90vw;
+  border-radius: 24px;
+  background: rgba(14, 18, 30, 0.95);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  box-shadow:
+    0 32px 80px rgba(0, 0, 0, 0.7),
+    0 0 60px rgba(239, 68, 68, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  padding: 40px 32px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.staff-alert-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+  color: #ef4444;
+  animation: staff-alert-pulse 2s ease-in-out infinite;
+}
+
+@keyframes staff-alert-pulse {
+
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.2);
+  }
+
+  50% {
+    box-shadow: 0 0 0 12px rgba(239, 68, 68, 0);
+  }
+}
+
+.staff-alert-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.95);
+  margin: 0 0 20px;
+  letter-spacing: -0.01em;
+}
+
+.staff-alert-details {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-bottom: 28px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.staff-alert-detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.staff-alert-detail-row:last-child {
+  border-bottom: none;
+}
+
+.staff-alert-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.staff-alert-value {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.staff-alert-value--danger {
+  color: #ef4444;
+  font-weight: 700;
+}
+
+.staff-alert-accept-btn {
+  width: 100%;
+  padding: 16px 24px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  color: white;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 20px rgba(34, 197, 94, 0.3);
+}
+
+.staff-alert-accept-btn:hover:not(:disabled) {
+  box-shadow: 0 8px 32px rgba(34, 197, 94, 0.45);
+  transform: translateY(-2px);
+}
+
+.staff-alert-accept-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Assigned Banner ──────────────────────────── */
+.staff-alert-assigned-banner {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 250;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 28px;
+  border-radius: 16px;
+  background: rgba(14, 18, 30, 0.9);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  font-size: 0.88rem;
+  color: rgba(255, 255, 255, 0.8);
+  white-space: nowrap;
+}
+
+.staff-alert-assigned-banner strong {
+  color: #22c55e;
+}
+
+/* ================================
+   Deploy Button (inside RecCard)
+   ================================ */
+
+.deploy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 8px 16px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: white;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 10px rgba(239, 68, 68, 0.25);
+}
+
+.deploy-btn:hover {
+  box-shadow: 0 4px 18px rgba(239, 68, 68, 0.4);
+  transform: translateY(-1px);
+}
+
+/* ================================
+   Active Deployment Panel (persistent)
+   ================================ */
+
+.dispatch-active-card {
+  margin-top: 20px;
+  border-radius: 16px;
+  background: rgba(239, 68, 68, 0.06);
+  border: 1px solid rgba(239, 68, 68, 0.18);
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(239, 68, 68, 0.06);
+}
+
+.dispatch-active-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 20px 12px;
+}
+
+.dispatch-active-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ef4444;
+  flex-shrink: 0;
+}
+
+.dispatch-active-info {
+  flex: 1;
+}
+
+.dispatch-active-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #ef4444;
+  letter-spacing: 0.06em;
+  margin: 0 0 4px;
+}
+
+.dispatch-active-meta {
+  display: flex;
+  gap: 16px;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.dispatch-active-meta strong {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.dispatch-active-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.dispatch-active-status--active {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.dispatch-active-status--acknowledged {
+  background: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.dispatch-active-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.dispatch-active-time {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.3);
+  font-variant-numeric: tabular-nums;
+}
+
+.dispatch-resolve-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border-radius: 8px;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  color: #22c55e;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.dispatch-resolve-btn:hover {
+  background: rgba(34, 197, 94, 0.18);
+  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.2);
 }
