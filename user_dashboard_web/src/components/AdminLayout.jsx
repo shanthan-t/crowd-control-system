@@ -1,23 +1,26 @@
 import React, { useState } from 'react';
-import { Shield, User, LogOut, Home, Monitor, Map, Users } from 'lucide-react';
+import { Shield, User, LogOut, Home, Monitor, Users, Radar, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AdminHome from './admin/AdminHome';
 import AdminLiveMonitor from './admin/AdminLiveMonitor';
-import FloorPlanHeatmap from './admin/FloorPlanHeatmap';
 import ManageStaff from './admin/ManageStaff';
+import SpatialIntelligence from './admin/SpatialIntelligence';
+import AdminTacticalPanel from './admin/AdminTacticalPanel';
 
 const NAV_ITEMS = [
     { key: 'home', label: 'Home', icon: Home },
     { key: 'live', label: 'Live Monitor', icon: Monitor },
-    { key: 'heatmap', label: 'Floor Plan', icon: Map },
+    { key: 'spatial', label: 'Spatial Intelligence', icon: Radar },
+    { key: 'tactical', label: 'AI Tactical', icon: Zap },
     { key: 'staff', label: 'Manage Staff', icon: Users },
 ];
 
 const SECTIONS = {
     home: AdminHome,
     live: AdminLiveMonitor,
-    heatmap: FloorPlanHeatmap,
     staff: ManageStaff,
+    spatial: SpatialIntelligence,
+    tactical: AdminTacticalPanel,
 };
 
 /* Page transition variants */

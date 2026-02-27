@@ -1,19 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Shield, User, LogOut, Activity, TrendingUp } from 'lucide-react';
+import { Shield, User, LogOut, Activity, TrendingUp, Camera } from 'lucide-react';
 import MetricsCard from './MetricsCard';
 import HistoryChart from './HistoryChart';
 import RadarSweep from './RadarSweep';
 import HeatmapVisualizer from './HeatmapVisualizer';
+import LiveCameraFeed from './public/LiveCameraFeed';
+import CrowdSafetyIndex from './CrowdSafetyIndex';
 
 const POLLING_INTERVAL = 2000;
 
 const Dashboard = ({ username, onLogout }) => {
     const [latest, setLatest] = useState(null);
     const [history, setHistory] = useState([]);
+    const [csiData, setCsiData] = useState(null);
     const [error, setError] = useState(null);
     const [profileOpen, setProfileOpen] = useState(false);
     const [heatmapExpanded, setHeatmapExpanded] = useState(false);
+
+    // Multi-camera state for public stream
+    const [cameras, setCameras] = useState([]);
+    const [selectedCamera, setSelectedCamera] = useState(null);
 
     // ── Escape key to close modal ────────────────────────────────────────────
     useEffect(() => {
@@ -28,9 +35,11 @@ const Dashboard = ({ username, onLogout }) => {
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const [latestRes, historyRes] = await Promise.all([
-                    axios.get('http://localhost:8000/api/data/latest'),
-                    axios.get('http://localhost:8000/api/data/history'),
+                const [latestRes, historyRes, camerasRes, aiRes] = await Promise.all([
+                    axios.get('/api/data/latest'),
+                    axios.get('/api/data/history'),
+                    axios.get('/api/cameras/list'),
+                    axios.get('/api/ai/recommendations').catch(() => ({ data: {} })) // non-blocking fallback
                 ]);
                 if (latestRes.data.available) {
                     setLatest(latestRes.data);
@@ -39,6 +48,23 @@ const Dashboard = ({ username, onLogout }) => {
                     setError('Telemetry bridge offline. Awaiting sensor sync...');
                 }
                 setHistory(historyRes.data);
+
+                if (aiRes.data?.csi !== undefined) {
+                    console.log("CSI DATA:", aiRes.data.csi);
+                    setCsiData(aiRes.data.csi);
+                } else {
+                    setCsiData({ crowd_safety_index: 0, current_count: 0, capacity_limit: 100 });
+                }
+
+                const activeCameras = camerasRes.data.cameras.filter(c => c.running);
+                setCameras(activeCameras);
+
+                // Auto-select first active camera if none selected
+                if (activeCameras.length > 0) {
+                    setSelectedCamera(prev => prev || activeCameras[0].camera_id);
+                } else {
+                    setSelectedCamera(null);
+                }
             } catch {
                 setError('Connection to command center lost.');
             }
@@ -219,17 +245,63 @@ const Dashboard = ({ username, onLogout }) => {
                             <HistoryChart data={history} />
                         </div>
                     </div>
+
+                    {/* NEW CARD — Crowd Safety Index */}
+                    <div className="flex-1 min-h-[220px] scroll-reveal delay-300">
+                        <CrowdSafetyIndex csi={csiData} />
+                    </div>
                 </div>
 
                 {/* ── RIGHT COLUMN ────────────────────────────────────────── */}
                 <div className="flex flex-col gap-6 w-full h-full">
-                    {/* Card 2 — Spatial Heatmap (DOMINANT) */}
-                    <div className="db-card scroll-reveal delay-150 flex flex-col h-[520px]">
+
+                    {/* Card 2.1 — Live Camera Feed */}
+                    <div className="db-card scroll-reveal flex flex-col h-[280px]">
+                        <div className="flex justify-between items-start mb-4">
+                            <div>
+                                <p className="db-card-label">Live Camera Feed</p>
+                                <div className="flex items-center gap-3">
+                                    <p className="db-card-sub mb-0">
+                                        Privacy-enabled optical stream.
+                                    </p>
+
+                                    {/* Camera Selector Dropdown */}
+                                    {cameras.length > 0 && (
+                                        <div className="relative flex items-center gap-2 bg-black/40 border border-white/10 rounded-md px-2 py-1">
+                                            <Camera size={12} className="text-gray-400" />
+                                            <select
+                                                className="bg-transparent text-xs text-white outline-none cursor-pointer appearance-none pr-4"
+                                                value={selectedCamera || ''}
+                                                onChange={(e) => setSelectedCamera(e.target.value)}
+                                            >
+                                                {cameras.map(cam => (
+                                                    <option key={cam.camera_id} value={cam.camera_id} className="bg-gray-900">
+                                                        {cam.label || `Camera ${cam.camera_id.substring(0, 4)}`}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <div className="absolute right-2 pointer-events-none">
+                                                <svg width="8" height="5" viewBox="0 0 8 5" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                    <path d="M1 1L4 4L7 1" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                                                </svg>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Independent Video Component */}
+                        <LiveCameraFeed cameraId={selectedCamera} />
+                    </div>
+
+                    {/* Card 2.2 — Spatial Heatmap (DOMINANT) */}
+                    <div className="db-card scroll-reveal delay-150 flex flex-col h-[400px]">
                         <div className="flex justify-between items-start mb-4">
                             <div>
                                 <p className="db-card-label">Spatial Heatmap</p>
                                 <p className="db-card-sub">
-                                    Live density estimation across monitored zones.
+                                    Live density estimation strictly mapped to blueprint.
                                 </p>
                             </div>
                             {/* Legend */}
@@ -247,17 +319,21 @@ const Dashboard = ({ username, onLogout }) => {
                             </div>
                         </div>
 
-                        {/* Heatmap Container */}
+                        {/* Pure Heatmap Container */}
                         <div
-                            className={`w-full flex-1 relative overflow-hidden rounded-lg border border-white/10 bg-black/40 p-6 shadow-[inset_0_0_40px_rgba(255,255,255,0.02)] hv-container-base ${heatmapExpanded ? 'hv-container-expanded' : ''}`}
+                            className={`w-full flex-1 relative overflow-hidden rounded-lg border border-white/10 bg-black/40 shadow-[inset_0_0_40px_rgba(255,255,255,0.02)] ${heatmapExpanded ? 'fixed inset-4 z-[100] bg-black shadow-2xl transition-all' : ''}`}
                             onClick={() => { if (!heatmapExpanded) setHeatmapExpanded(true); }}
                         >
                             {heatmapExpanded && (
-                                <button className="hv-close-btn" onClick={(e) => { e.stopPropagation(); setHeatmapExpanded(false); }}>
+                                <button className="absolute top-4 right-4 z-[110] bg-white/10 hover:bg-white/20 p-2 rounded-full transition-colors" onClick={(e) => { e.stopPropagation(); setHeatmapExpanded(false); }}>
                                     ✕
                                 </button>
                             )}
-                            <HeatmapVisualizer />
+
+                            {/* Pure Heatmap Canvas Render (No video) */}
+                            <div className="relative z-10 w-full h-full">
+                                <HeatmapVisualizer roomName="Room 1" />
+                            </div>
                         </div>
                     </div>
 

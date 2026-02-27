@@ -2,12 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import LoginSignup from './components/LoginSignup';
 import AdminLayout from './components/AdminLayout';
 import Dashboard from './components/Dashboard';
+import RoleCinematicGSAP from './components/RoleCinematicGSAP';
 import { BackgroundCanvas } from './components/BackgroundCanvas';
 
 function App() {
   const [username, setUsername] = useState(null);
   const [role, setRole] = useState(null);
-  const [loginSequencePhase, setLoginSequencePhase] = useState(0); // 0=login, 1=transition, 2=dashboard
+  const [loginSequencePhase, setLoginSequencePhase] = useState(0); // 0=login, 1=transition, 3=intro, 2=dashboard
   const [bootComplete, setBootComplete] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [isPulsing, setIsPulsing] = useState(false);
@@ -44,8 +45,12 @@ function App() {
       localStorage.setItem('sentinel_role', userRole);
       localStorage.setItem('sentinel_token', token);
       setIsTransitioning(false);
-      setLoginSequencePhase(2);
+      setLoginSequencePhase(3); // Start Intro
     }, 1100);
+  };
+
+  const handleIntroComplete = () => {
+    setLoginSequencePhase(2); // Start Dashboard
   };
 
   const handleLogout = () => {
@@ -79,6 +84,16 @@ function App() {
           />
         )}
       </div>
+
+      {/* Intro Phase */}
+      {loginSequencePhase === 3 && (
+        <div className="relative z-[200]">
+          <RoleCinematicGSAP
+            role={role}
+            onComplete={handleIntroComplete}
+          />
+        </div>
+      )}
 
       {/* Admin dashboard */}
       {loginSequencePhase === 2 && role === 'admin' && (

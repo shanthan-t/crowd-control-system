@@ -3,7 +3,7 @@ import { Camera, Upload, RotateCcw, Save, CheckCircle, AlertCircle, Pause, Play 
 import axios from 'axios';
 import AppleSelect from '../AppleSelect';
 
-const API = 'http://localhost:8000';
+const API = '';
 
 const AREA_TYPES = [
     'Open Ground',

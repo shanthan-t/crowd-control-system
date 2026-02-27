@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
@@ -11,7 +11,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from shared import auth, db
 from shared import jwt_utils
 from user_dashboard import monitor
-from user_dashboard import calibration as calib_mod
+from fastapi import File, UploadFile
+from fastapi.responses import FileResponse
+import shutil
 
 app = FastAPI(title="Sentinel React API")
 
@@ -44,6 +46,10 @@ class MonitorStartRequest(BaseModel):
     source: str = "0"           # "0" = webcam, RTSP URL, IP cam URL
     model: str = "yolov8n-pose.pt"
 
+class CameraAddRequest(BaseModel):
+    source_url: str
+    label: str = ""
+
 # ── Auth Endpoints ──────────────────────────────────────────────────────────
 
 @app.post("/api/auth/login")
@@ -67,7 +73,303 @@ def register(req: RegisterRequest):
     return {"success": True, "message": "Account created. You can now sign in."}
 
 
-# ── Live Monitor Endpoints ──────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════
+#  Multi-Camera Endpoints
+# ══════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/cameras/add")
+def cameras_add(req: CameraAddRequest):
+    """Add a new camera session. Returns camera_id."""
+    mgr = monitor.get_manager()
+    camera_id, err = mgr.add_camera(req.source_url, req.label)
+    if err:
+        raise HTTPException(status_code=409, detail=err)
+    return {"success": True, "camera_id": camera_id}
+
+
+@app.post("/api/cameras/remove/{camera_id}")
+def cameras_remove(camera_id: str):
+    """Stop and remove a camera session."""
+    mgr = monitor.get_manager()
+    ok, err = mgr.remove_camera(camera_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=err)
+    return {"success": True, "message": "Camera removed."}
+
+
+@app.post("/api/cameras/start/{camera_id}")
+def cameras_start(camera_id: str):
+    """Start detection on a specific camera."""
+    mgr = monitor.get_manager()
+    ok, err = mgr.start_camera(camera_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail=err)
+    return {"success": True, "message": "Camera started."}
+
+
+@app.post("/api/cameras/stop/{camera_id}")
+def cameras_stop(camera_id: str):
+    """Stop detection on a specific camera."""
+    mgr = monitor.get_manager()
+    ok, err = mgr.stop_camera(camera_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail=err)
+    return {"success": True, "message": "Camera stopped."}
+
+
+@app.get("/api/cameras/list")
+def cameras_list():
+    """Returns array of all camera sessions with status."""
+    mgr = monitor.get_manager()
+    return {"cameras": mgr.list_sessions()}
+
+
+@app.get("/api/cameras/stream/admin/{camera_id}")
+def cameras_stream_admin(camera_id: str):
+    """MJPEG admin stream for a specific camera (no blur)."""
+    mgr = monitor.get_manager()
+    session = mgr.get_session(camera_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Camera not found.")
+
+    def _generate():
+        while True:
+            frame = mgr.get_frame(camera_id, stream_type="admin")
+            if not frame:
+                time.sleep(0.01)
+                continue
+                
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" +
+                frame +
+                b"\r\n"
+            )
+            time.sleep(0.033)  # ~30 fps
+
+    return StreamingResponse(
+        _generate(),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+@app.get("/api/cameras/stream/public/{camera_id}")
+def cameras_stream_public(camera_id: str):
+    """MJPEG public stream for a specific camera (with face blur)."""
+    mgr = monitor.get_manager()
+    session = mgr.get_session(camera_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Camera not found.")
+
+    def _generate():
+        while True:
+            frame = mgr.get_frame(camera_id, stream_type="public")
+            if not frame:
+                time.sleep(0.01)
+                continue
+                
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" +
+                frame +
+                b"\r\n"
+            )
+            time.sleep(0.033)  # ~30 fps
+
+    return StreamingResponse(
+        _generate(),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+@app.get("/api/cameras/stream/{camera_id}")
+def cameras_stream(camera_id: str):
+    """MJPEG stream for a specific camera (defaults to admin for backward compatibility)."""
+    mgr = monitor.get_manager()
+    session = mgr.get_session(camera_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Camera not found.")
+
+    def _generate():
+        while True:
+            frame = mgr.get_frame(camera_id, stream_type="admin")
+            if not frame:
+                time.sleep(0.01)
+                continue
+                
+
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" +
+                frame +
+                b"\r\n"
+            )
+            time.sleep(0.033)  # ~30 fps
+
+    return StreamingResponse(
+        _generate(),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
+@app.get("/api/cameras/spatial/{camera_id}")
+def cameras_spatial(camera_id: str):
+    """SSE spatial projection stream for a specific camera."""
+    mgr = monitor.get_manager()
+    session = mgr.get_session(camera_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Camera not found.")
+
+    def _generate():
+        last_ts = 0
+        while True:
+            data = mgr.get_spatial_data(camera_id)
+            if data["ts"] > last_ts:
+                payload = json.dumps(data)
+                yield f"data: {payload}\n\n"
+                last_ts = data["ts"]
+            time.sleep(0.20)
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/rooms/spatial/{room_name}")
+def rooms_spatial(room_name: str):
+    """SSE spatial projection stream for all cameras in a room fused together."""
+    mgr = monitor.get_manager()
+    
+    # Optional basic room validation, though mgr.get_room_spatial_data is safe
+    if room_name not in ["Room 1", "Room 2"]:
+        raise HTTPException(status_code=404, detail="Room not found.")
+
+    def _generate():
+        last_ts = 0
+        while True:
+            data = mgr.get_room_spatial_data(room_name)
+            # Only yield if it's successfully returned a valid grid and has advanced in time
+            if data["ready"] and data["ts"] > last_ts:
+                payload = json.dumps(data)
+                yield f"data: {payload}\n\n"
+                last_ts = data["ts"]
+            time.sleep(0.20)
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+@app.get("/api/public/heatmap/stream")
+def public_heatmap_stream(room: str = "Room 1"):
+    """Public read-only SSE spatial projection stream for the active room layout."""
+    # Mirror the exact same behavior as rooms_spatial without altering backend scope
+    mgr = monitor.get_manager()
+    
+    if room not in ["Room 1", "Room 2"]:
+        raise HTTPException(status_code=404, detail="Room not found.")
+
+    def _generate():
+        last_ts = 0
+        while True:
+            data = mgr.get_room_spatial_data(room)
+            if data["ready"] and data["ts"] > last_ts:
+                payload = json.dumps(data)
+                yield f"data: {payload}\n\n"
+                last_ts = data["ts"]
+            time.sleep(0.20)
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+class CalibrationRequest(BaseModel):
+    camera_pts: list[list[float]]
+    blueprint_pts: list[list[float]]
+    bp_w: int
+    bp_h: int
+
+@app.post("/api/cameras/spatial/calibrate/{camera_id}")
+def cameras_spatial_calibrate(camera_id: str, req: CalibrationRequest):
+    """Set the real-world floor boundary for perspective projection via homography."""
+    mgr = monitor.get_manager()
+    ok, err = mgr.calibrate_spatial(camera_id, req.camera_pts, req.blueprint_pts, req.bp_w, req.bp_h)
+    if not ok:
+        raise HTTPException(status_code=400, detail=err)
+    return {"success": True, "message": "Calibration matrix applied."}
+
+@app.post("/api/cameras/spatial/blueprint/{camera_id}")
+async def upload_blueprint(camera_id: str, file: UploadFile = File(...)):
+    """Upload a blueprint image to use for spatial homography mapping."""
+    import os
+    blueprint_dir = os.path.join(os.path.dirname(__file__), "blueprints")
+    os.makedirs(blueprint_dir, exist_ok=True)
+    file_path = os.path.join(blueprint_dir, f"{camera_id}.jpg")
+    
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+        
+    return {"success": True, "message": "Blueprint uploaded successfully"}
+
+@app.get("/api/cameras/spatial/blueprint/{camera_id}")
+def get_blueprint(camera_id: str):
+    """Fetch the uploaded blueprint image for the given camera."""
+    import os
+    blueprint_dir = os.path.join(os.path.dirname(__file__), "blueprints")
+    file_path = os.path.join(blueprint_dir, f"{camera_id}.jpg")
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Blueprint not found.")
+    return FileResponse(file_path)
+
+
+@app.post("/api/cameras/start-all")
+def cameras_start_all():
+    """Start all stopped cameras."""
+    mgr = monitor.get_manager()
+    count = mgr.start_all()
+    return {"success": True, "started": count}
+
+
+@app.post("/api/cameras/stop-all")
+def cameras_stop_all():
+    """Stop all running cameras."""
+    mgr = monitor.get_manager()
+    count = mgr.stop_all()
+    return {"success": True, "stopped": count}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  AI Tactical Recommendations
+# ══════════════════════════════════════════════════════════════════════════
+
+from user_dashboard import ai_engine
+
+@app.get("/api/ai/recommendations")
+def ai_recommendations():
+    """Return AI tactical recommendations based on live camera data."""
+    mgr = monitor.get_manager()
+    result = ai_engine.get_recommendations(mgr)
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Legacy Live Monitor Endpoints (backward compatible)
+# ══════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/monitor/start")
 def monitor_start(req: MonitorStartRequest):
@@ -87,9 +389,13 @@ def monitor_stop():
 
 @app.get("/api/monitor/status")
 def monitor_status():
-    """Returns current running state and latest metrics."""
+    """Returns current running state etc."""
+    mgr = monitor.get_manager()
+    cameras = mgr.list_sessions()
     return {
         "running": monitor.is_running(),
+        "camera_count": len(cameras),
+        "cameras": cameras,
         **monitor.get_metrics()
     }
 
@@ -120,7 +426,7 @@ def monitor_stream():
                 jpeg +
                 b"\r\n"
             )
-            time.sleep(0.04)  # ~25 fps
+            time.sleep(0.033)  # ~30 fps
 
     return StreamingResponse(
         _generate(),
@@ -157,54 +463,33 @@ def get_history(limit: int = 50):
         for h in history
     ]
 
-# ── Calibration Endpoints ───────────────────────────────────────────────────
+# ── Spatial Density Stream ──────────────────────────────────────────────────
 
-@app.post("/api/calibration/save")
-async def save_calibration(
-    blueprint: UploadFile = File(...),
-    camera_pts: str = Form(...),
-    floor_pts: str = Form(...),
-    area_type: str = Form("Open Ground"),
-):
-    """Save calibration: blueprint image + 4+4 points → compute homography."""
-    try:
-        cam = json.loads(camera_pts)
-        flr = json.loads(floor_pts)
-    except json.JSONDecodeError:
-        raise HTTPException(400, "camera_pts and floor_pts must be valid JSON arrays.")
+@app.get("/api/spatial/stream")
+def spatial_stream():
+    """SSE stream — automatic spatial projection at ~5 Hz."""
+    def _generate():
+        last_ts = 0
+        while True:
+            data = monitor.get_spatial_data()
+            if data["ts"] > last_ts:
+                payload = json.dumps(data)
+                yield f"data: {payload}\n\n"
+                last_ts = data["ts"]
+            time.sleep(0.20)  # ~5 Hz
 
-    bp_bytes = await blueprint.read()
-    if len(bp_bytes) > 10 * 1024 * 1024:
-        raise HTTPException(400, "Blueprint file too large (max 10MB).")
-
-    snap, err = calib_mod.save_calibration(
-        camera_pts=cam,
-        floor_pts=flr,
-        area_type=area_type,
-        blueprint_bytes=bp_bytes,
-        blueprint_filename=blueprint.filename or "blueprint.png",
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
-    if snap is None:
-        raise HTTPException(400, err)
-
-    # Atomic swap into running monitor
-    monitor.set_calib(snap)
-    return {"success": True, "message": "Calibration saved and activated."}
 
 
-@app.get("/api/calibration/status")
-def calibration_status():
-    """Check if calibration is active."""
-    calib = monitor.get_calib()
-    if calib is None:
-        return {"calibrated": False}
-    return {
-        "calibrated": True,
-        "area_type": calib.area_type,
-        "bp_width": calib.bp_width,
-        "bp_height": calib.bp_height,
-        "blueprint_path": calib.blueprint_path,
-    }
+
 
 
 @app.get("/api/monitor/snapshot")
@@ -231,79 +516,6 @@ def monitor_snapshot():
     return Response(content=jpeg, media_type="image/jpeg")
 
 
-@app.get("/api/heatmap/stream")
-def heatmap_stream():
-    """SSE stream — heatmap positions + density grid at ~3 Hz."""
-    def _generate():
-        last_ts = 0
-        while True:
-            data = monitor.get_heatmap_data()
-            if data["ts"] > last_ts:
-                payload = json.dumps(data)
-                yield f"data: {payload}\n\n"
-                last_ts = data["ts"]
-            time.sleep(0.33)  # ~3 Hz
-
-    return StreamingResponse(
-        _generate(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-@app.get("/api/calibration/blueprint")
-def serve_blueprint():
-    """Serve the active blueprint image."""
-    calib = monitor.get_calib()
-    if calib is None or not os.path.exists(calib.blueprint_path):
-        raise HTTPException(404, "No calibration or blueprint found.")
-    with open(calib.blueprint_path, 'rb') as f:
-        data = f.read()
-    ext = os.path.splitext(calib.blueprint_path)[1].lower()
-    ct = {
-        '.png': 'image/png', '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml',
-    }.get(ext, 'image/png')
-    return Response(content=data, media_type=ct)
-
-
-@app.get("/api/calibration/current")
-def calibration_current():
-    """Return full calibration state for frontend restore on mount."""
-    calib = monitor.get_calib()
-    if calib is None:
-        return {"calibrated": False}
-
-    # Read the persisted JSON to get the original points
-    _, meta = calib_mod.load_calibration()
-    return {
-        "calibrated": True,
-        "area_type": calib.area_type,
-        "bp_width": calib.bp_width,
-        "bp_height": calib.bp_height,
-        "blueprint_url": f"/api/calibration/blueprint",
-        "camera_pts": meta.get("camera_pts", []) if meta else [],
-        "floor_pts": meta.get("floor_pts", []) if meta else [],
-    }
-
-
-@app.delete("/api/calibration/reset")
-def calibration_reset():
-    """Clear calibration from disk and monitor."""
-    # Remove persisted file
-    active_path = calib_mod.ACTIVE_FILE
-    if os.path.exists(active_path):
-        os.remove(active_path)
-    # Clear from running monitor
-    monitor.set_calib(None)
-    return {"success": True, "message": "Calibration reset."}
-
-
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-

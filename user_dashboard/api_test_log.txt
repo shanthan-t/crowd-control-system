@@ -1,0 +1,163 @@
+/home/shanthan/Desktop/Personal/Projects/crowd control audio/user_dashboard/api.py:31: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+INFO:     Started server process [70202]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+[Auth] Admin ready: admin
+INFO:     127.0.0.1:55800 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55786 - "GET /api/ai/recommendations HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55810 - "GET /api/ai/recommendations HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55826 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55842 - "GET /api/ai/recommendations HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55848 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57358 - "GET /api/ai/recommendations HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57372 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57380 - "GET /api/ai/recommendations HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57384 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57394 - "GET /api/ai/recommendations HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57396 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51084 - "GET /api/ai/recommendations HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51100 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51108 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51122 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51124 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45784 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45800 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45808 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45812 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52724 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52736 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52750 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56118 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56124 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56128 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36722 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36734 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36748 - "GET /api/cameras/list HTTP/1.1" 200 OK
+[MultiCameraManager] Request to add camera URL: http://10.207.15.143:8080/video | Label: 
+INFO:     127.0.0.1:36752 - "POST /api/cameras/add HTTP/1.1" 200 OK
+[MultiCameraManager] Starting detection threads for camera_id: e765a510ddf4
+[Grabber e765a510] Initializing VideoCapture for source: http://10.207.15.143:8080/video
+[Grabber e765a510] Attempt 1: cv2.VideoCapture(http://10.207.15.143:8080/video)
+[Inference e765a510] Thread started. Awaiting frames...
+INFO:     127.0.0.1:36768 - "POST /api/cameras/start/e765a510ddf4 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36770 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36778 - "GET /api/cameras/stream/e765a510ddf4 HTTP/1.1" 200 OK
+Exception in thread sentinel-infer-e765a510ddf4:
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/threading.py", line 1073, in _bootstrap_inner
+    self.run()
+  File "/usr/lib/python3.12/threading.py", line 1010, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/shanthan/Desktop/Personal/Projects/crowd control audio/user_dashboard/monitor.py", line 507, in _inference_loop
+    elapsed = time.time() - t0
+                            ^^
+NameError: name 't0' is not defined
+[mjpeg @ 0x721c500054c0] overread 8
+[Inference e765a510] ⚠ No CUDA — running on CPU
+[Inference e765a510] ══════════════════════════════════════════
+[Inference e765a510] YOLO MODEL DIAGNOSTICS
+[Inference e765a510]   Weight file : yolov8n.pt
+[Inference e765a510]   Task        : detect
+[Inference e765a510]   Person class: [0] (filtering on classes=[0])
+[Inference e765a510]   Input size  : 768
+[Inference e765a510]   Resize to   : (960, 540)
+[Inference e765a510]   Conf thresh : 0.2
+[Inference e765a510]   IOU thresh  : 0.5
+[Inference e765a510]   FPS cap     : 18
+[Inference e765a510] ══════════════════════════════════════════
+[Inference e765a510] Inference loop started (cap: 18 FPS, debug: False)
+[Grabber e765a510] cv2.VideoCapture().isOpened() == True
+[Grabber e765a510] Frame grabber started for: http://10.207.15.143:8080/video
+Camera: e765a510ddf4 Frame read: False
+Stream URL: http://10.207.15.143:8080/video
+Frame count before fail: 5
+Timestamp: 1772130959.7442124
+Reconnecting...
+[Grabber e765a510] Attempting reconnect. Forcing FFMPEG timeout policy.
+[Grabber e765a510] Reconnected successfully.
+INFO:     127.0.0.1:36782 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38126 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38132 - "GET /api/cameras/list HTTP/1.1" 200 OK
+[mjpeg @ 0x721c5000d100] overread 8
+INFO:     127.0.0.1:38140 - "GET /api/cameras/list HTTP/1.1" 200 OK
+[mjpeg @ 0x721c5000d100] overread 8
+INFO:     127.0.0.1:56984 - "GET /api/cameras/list HTTP/1.1" 200 OK
+[http @ 0x721c50001ec0] Stream ends prematurely at 151965, should be 18446744073709551615
+Camera: e765a510ddf4 Frame read: False
+Stream URL: http://10.207.15.143:8080/video
+Frame count before fail: 733
+Timestamp: 1772130973.6476636
+Reconnecting...
+[Grabber e765a510] Attempting reconnect. Forcing FFMPEG timeout policy.
+[Grabber e765a510] Reconnected successfully.
+Camera: e765a510ddf4 Frame read: False
+Stream URL: http://10.207.15.143:8080/video
+Frame count before fail: 735
+Timestamp: 1772130974.878186
+Reconnecting...
+INFO:     127.0.0.1:56988 - "GET /api/cameras/list HTTP/1.1" 200 OK
+[tcp @ 0x721c50004c40] Connection to tcp://10.207.15.143:8080 failed: Connection refused
+[tcp @ 0x721c50004c40] Connection to tcp://10.207.15.143:8080 failed: Connection refused
+[tcp @ 0x721c50004c40] Connection to tcp://10.207.15.143:8080 failed: Connection refused
+[Grabber e765a510] Attempting reconnect. Forcing FFMPEG timeout policy.
+[Grabber e765a510] Reconnect failed.
+Camera: e765a510ddf4 Frame read: False
+Stream URL: http://10.207.15.143:8080/video
+Frame count before fail: 735
+Timestamp: 1772130975.8902395
+Reconnecting...
+[Grabber e765a510] Attempting reconnect. Forcing FFMPEG timeout policy.
+[Grabber e765a510] Reconnect failed.
+Camera: e765a510ddf4 Frame read: False
+Stream URL: http://10.207.15.143:8080/video
+Frame count before fail: 735
+Timestamp: 1772130976.8997333
+Reconnecting...
+[Grabber e765a510] Attempting reconnect. Forcing FFMPEG timeout policy.
+[Grabber e765a510] Reconnect failed.
+Camera: e765a510ddf4 Frame read: False
+Stream URL: http://10.207.15.143:8080/video
+Frame count before fail: 735
+Timestamp: 1772130977.9071124
+Reconnecting...
+INFO:     127.0.0.1:57002 - "GET /api/cameras/list HTTP/1.1" 200 OK
+[tcp @ 0x721c50004c40] Connection to tcp://10.207.15.143:8080 failed: Connection refused
+[tcp @ 0x721c50004c40] Connection to tcp://10.207.15.143:8080 failed: Connection refused
+[tcp @ 0x721c50004c40] Connection to tcp://10.207.15.143:8080 failed: Connection refused
+[Grabber e765a510] Attempting reconnect. Forcing FFMPEG timeout policy.
+[Grabber e765a510] Reconnect failed.
+Camera: e765a510ddf4 Frame read: False
+Stream URL: http://10.207.15.143:8080/video
+Frame count before fail: 735
+Timestamp: 1772130978.9164615
+Reconnecting...
+[Grabber e765a510] Attempting reconnect. Forcing FFMPEG timeout policy.
+[Grabber e765a510] Reconnect failed.
+Camera: e765a510ddf4 Frame read: False
+Stream URL: http://10.207.15.143:8080/video
+Frame count before fail: 735
+Timestamp: 1772130979.9258444
+Reconnecting...
+[Grabber e765a510] Attempting reconnect. Forcing FFMPEG timeout policy.
+[Grabber e765a510] Reconnect failed.
+Camera: e765a510ddf4 Frame read: False
+Stream URL: http://10.207.15.143:8080/video
+Frame count before fail: 735
+Timestamp: 1772130980.9432337
+Reconnecting...
+INFO:     127.0.0.1:45638 - "GET /api/cameras/list HTTP/1.1" 200 OK
+[tcp @ 0x721c50004c40] Connection to tcp://10.207.15.143:8080 failed: Connection timed out
+[Grabber e765a510] Attempting reconnect. Forcing FFMPEG timeout policy.
+[Grabber e765a510] Reconnect failed.
+[Grabber e765a510] Frame grabber stopped.
+INFO:     127.0.0.1:57006 - "POST /api/cameras/remove/e765a510ddf4 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45650 - "GET /api/cameras/list HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for background tasks to complete. (CTRL+C to force quit)

@@ -41,7 +41,7 @@ const LoginSignup = ({ onLogin, bootCompleteState, isFocusedRef, isTypingRef }) 
                     setLoading(false);
                     return;
                 }
-                await axios.post('http://localhost:8000/api/auth/register', {
+                await axios.post('/api/auth/register', {
                     username: form.username,
                     password: form.password,
                 });
@@ -50,7 +50,7 @@ const LoginSignup = ({ onLogin, bootCompleteState, isFocusedRef, isTypingRef }) 
                 setForm(prev => ({ ...prev, password: '', confirmPassword: '' }));
             } else {
                 // ── Login ───────────────────────────────────────
-                const res = await axios.post('http://localhost:8000/api/auth/login', {
+                const res = await axios.post('/api/auth/login', {
                     username: form.username,
                     password: form.password,
                 });
